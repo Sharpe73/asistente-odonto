@@ -7,7 +7,7 @@ const documentosRoutes = require("./routes/documentosRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const faqRoutes = require("./routes/faqRoutes");
 
-// 👉 Nueva ruta que creamos recién
+// 👉 Nueva ruta que maneja las preguntas al documento
 const preguntasRoutes = require("./routes/preguntas");
 
 const app = express();
@@ -18,13 +18,21 @@ app.use(express.json());
 // =====================================
 // 📌 Registrar rutas
 // =====================================
+
+// Subida + fragmentación de PDFs
 app.use("/documentos", documentosRoutes);
-app.use("/documentos", preguntasRoutes);  // 👈 NUEVO
+
+// Preguntar a un documento (nueva ruta)
+app.use("/documentos", preguntasRoutes);
+
+// Chat general de tu bot
 app.use("/chat", chatRoutes);
+
+// Preguntas frecuentes
 app.use("/faq", faqRoutes);
 
 // =====================================
-// 📌 Ruta de prueba para Railway
+// 📌 Ruta de prueba Railway
 // =====================================
 app.get("/", async (req, res) => {
   try {
