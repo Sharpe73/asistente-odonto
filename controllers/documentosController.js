@@ -28,7 +28,7 @@ function fragmentarTexto(texto, maxLength = 700) {
 }
 
 // =========================================================
-// 📌 1. Subir PDF, extraer texto, guardarlo y fragmentarlo
+// 📌 Subir PDF, extraer texto y fragmentarlo
 // =========================================================
 exports.subirDocumento = async (req, res) => {
   try {
@@ -51,20 +51,12 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 2️⃣ GUARDAR DOCUMENTO EN BD
-    // SOLO guardamos lo mínimo obligatorio
+    // 2️⃣ GUARDAR DOCUMENTO
     const resultadoDoc = await pool.query(
-      `INSERT INTO documentos 
-        (nombre_original, extension, contenido_texto, ruta_archivo, titulo)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO documentos (titulo, ruta_archivo)
+       VALUES ($1, $2)
        RETURNING id`,
-      [
-        archivo.originalname,
-        path.extname(archivo.originalname).replace(".", ""),
-        textoExtraído,
-        archivo.filename,
-        archivo.originalname
-      ]
+      [archivo.originalname, archivo.filename]
     );
 
     const documentoId = resultadoDoc.rows[0].id;
@@ -72,12 +64,12 @@ exports.subirDocumento = async (req, res) => {
     // 3️⃣ FRAGMENTAR TEXTO
     const fragmentos = fragmentarTexto(textoExtraído, 700);
 
-    // 4️⃣ GUARDAR FRAGMENTOS
-    for (const frag of fragmentos) {
+    // 4️⃣ GUARDAR FRAGMENTOS CON INDEX
+    for (let i = 0; i < fragmentos.length; i++) {
       await pool.query(
-        `INSERT INTO documentos_fragmentos (documento_id, texto)
-         VALUES ($1, $2)`,
-        [documentoId, frag]
+        `INSERT INTO documentos_fragmentos (documento_id, fragmento_index, texto)
+         VALUES ($1, $2, $3)`,
+        [documentoId, i + 1, fragmentos[i]]
       );
     }
 
