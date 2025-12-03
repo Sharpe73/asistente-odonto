@@ -1,38 +1,51 @@
 const fs = require("fs");
-const path = require("path");
 
-// 👀 IMPORTACIÓN SEGURA DE pdf-parse (compatible con Railway)
-let pdfParse;
+// ======================================================
+// 🛠 CARGAR pdf-parse DE FORMA SEGURA (Railway compatible)
+// ======================================================
+let pdfParse = null;
+
 try {
-  pdfParse = require("pdf-parse");
-  if (pdfParse && pdfParse.default) {
-    pdfParse = pdfParse.default;
+  // Carga pdf-parse
+  const lib = require("pdf-parse");
+
+  // pdf-parse a veces exporta la función directo, otras veces en default
+  pdfParse = typeof lib === "function" ? lib : lib.default;
+  
+  if (typeof pdfParse !== "function") {
+    console.error("❌ pdf-parse no entregó una función. Valor recibido:", pdfParse);
+    pdfParse = null;
   }
+
 } catch (err) {
   console.error("❌ No se pudo cargar pdf-parse:", err);
 }
 
+
 // ======================================================
-// 🧩 EXTRAER TEXTO DE PDF
+// 📄 EXTRAER TEXTO DE PDF
 // ======================================================
 async function extraerTextoDesdePDF(rutaPDF) {
   try {
     if (!pdfParse) {
-      throw new Error("pdf-parse no está disponible");
+      throw new Error("pdfParse no es una función");
     }
 
     const buffer = fs.readFileSync(rutaPDF);
-    const data = await pdfParse(buffer);
 
-    return data.text || "";
+    const resultado = await pdfParse(buffer);
+
+    return resultado.text || "";
+
   } catch (error) {
     console.error("❌ Error procesando PDF:", error);
     throw error;
   }
 }
 
+
 // ======================================================
-// ✂️ FRAGMENTAR TEXTO (por tamaño)
+// ✂️ FRAGMENTAR TEXTO
 // ======================================================
 function fragmentarTexto(texto, maxLength = 700) {
   const fragmentos = [];
@@ -44,6 +57,8 @@ function fragmentarTexto(texto, maxLength = 700) {
   return fragmentos;
 }
 
+
+// ======================================================
 module.exports = {
   extraerTextoDesdePDF,
   fragmentarTexto
