@@ -75,3 +75,61 @@ exports.crearSesion = async (req, res) => {
     res.status(500).json({ ok: false, mensaje: "Error en el servidor" });
   }
 };
+
+// =========================================================
+// 🤖 4. Procesar pregunta del usuario (CON OPENAI)
+// =========================================================
+exports.preguntar = async (req, res) => {
+  try {
+    const { session_id, pregunta } = req.body;
+
+    // Validaciones
+    if (!session_id) {
+      return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
+    }
+
+    if (!pregunta || pregunta.trim() === "") {
+      return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
+    }
+
+    // 1️⃣ Guardar la pregunta del usuario
+    await pool.query(
+      `INSERT INTO chat_historial (session_id, role, mensaje)
+       VALUES ($1, 'user', $2)`,
+      [session_id, pregunta]
+    );
+
+    // 2️⃣ Buscar fragmentos relevantes (columna correcta = texto)
+    const fragmentos = await pool.query(
+      `SELECT texto 
+       FROM documentos_fragmentos
+       WHERE texto ILIKE $1
+       LIMIT 8`,
+      [`%${pregunta}%`]
+    );
+
+    const contexto = fragmentos.rows.map(f => f.texto).join("\n\n");
+
+    // 3️⃣ Generar respuesta con OpenAI
+    const { generarRespuestaIA } = require("../services/openaiService");
+    const respuestaIA = await generarRespuestaIA(pregunta, contexto);
+
+    // 4️⃣ Guardar respuesta del bot
+    await pool.query(
+      `INSERT INTO chat_historial (session_id, role, mensaje)
+       VALUES ($1, 'assistant', $2)`,
+      [session_id, respuestaIA]
+    );
+
+    // 5️⃣ Respuesta al frontend
+    res.json({
+      ok: true,
+      respuesta: respuestaIA,
+      fragmentos_encontrados: fragmentos.rowCount
+    });
+
+  } catch (error) {
+    console.error("❌ Error procesando pregunta:", error);
+    res.status(500).json({ ok: false, mensaje: "Error interno del servidor" });
+  }
+};

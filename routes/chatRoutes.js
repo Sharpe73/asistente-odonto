@@ -17,4 +17,9 @@ router.post("/registrar", chatController.registrarMensaje);
 // ================================
 router.get("/historial/:session_id", chatController.obtenerHistorial);
 
+// ================================
+// 🤖 Bot: procesar pregunta y responder
+// ================================
+router.post("/preguntar", chatController.preguntar);
+
 module.exports = router;

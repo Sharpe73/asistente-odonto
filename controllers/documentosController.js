@@ -1,54 +1,71 @@
 const pool = require("../database");
+const fs = require("fs");
+const path = require("path");
+const { extraerTextoDesdePDF, fragmentarTexto } = require("../utils/pdfProcessor");
 
-/**
- * Subir documento y guardarlo en la base de datos
- */
+// =========================================================
+// 📌 1. Subir PDF, extraer texto, guardarlo y fragmentarlo
+// =========================================================
 exports.subirDocumento = async (req, res) => {
   try {
-    const { nombre_archivo, contenido_base64 } = req.body;
+    // Validar archivo
+    if (!req.file) {
+      return res.status(400).json({ ok: false, mensaje: "Debes subir un archivo PDF" });
+    }
 
-    if (!nombre_archivo || !contenido_base64) {
+    const archivo = req.file;
+    const rutaPDF = archivo.path; // ruta física temporal del PDF subido
+
+    console.log("📄 PDF recibido:", rutaPDF);
+
+    // 1️⃣ EXTRAER TEXTO USANDO OPENAI
+    const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
+
+    if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
         ok: false,
-        mensaje: "Faltan campos: nombre_archivo o contenido_base64",
+        mensaje: "No se pudo extraer texto del PDF"
       });
     }
 
-    // Guardar registro del documento
-    const docResult = await pool.query(
-      `INSERT INTO documentos (nombre_archivo, contenido_base64)
+    // 2️⃣ GUARDAR DOCUMENTO EN TABLA 'documentos'
+    const resultadoDoc = await pool.query(
+      `INSERT INTO documentos (titulo, ruta_archivo)
        VALUES ($1, $2)
        RETURNING id`,
-      [nombre_archivo, contenido_base64]
+      [archivo.originalname, archivo.filename]
     );
 
-    const documento_id = docResult.rows[0].id;
+    const documentoId = resultadoDoc.rows[0].id;
 
-    // Registrar en logs
-    await pool.query(
-      `INSERT INTO logs_sistema (tipo, detalle)
-       VALUES ('info', $1)`,
-      [`Documento subido: ${nombre_archivo} (ID ${documento_id})`]
-    );
+    // 3️⃣ FRAGMENTAR TEXTO
+    const fragmentos = fragmentarTexto(textoExtraído, 700);
 
-    return res.json({
+    // 4️⃣ GUARDAR CADA FRAGMENTO EN DB
+    for (const frag of fragmentos) {
+      await pool.query(
+        `INSERT INTO documentos_fragmentos (documento_id, texto)
+         VALUES ($1, $2)`,
+        [documentoId, frag]
+      );
+    }
+
+    // 5️⃣ BORRAR ARCHIVO TEMPORAL
+    fs.unlinkSync(rutaPDF);
+
+    res.json({
       ok: true,
-      mensaje: "Documento subido correctamente",
-      documento_id,
+      mensaje: "Documento subido y procesado correctamente ✔",
+      documentoId,
+      total_fragmentos: fragmentos.length
     });
 
   } catch (error) {
-    console.error("❌ Error subirDocumento:", error);
-
-    await pool.query(
-      `INSERT INTO logs_sistema (tipo, detalle)
-       VALUES ('error', $1)`,
-      [error.message]
-    );
-
-    return res.status(500).json({
+    console.error("❌ Error al subir documento:", error);
+    res.status(500).json({
       ok: false,
-      mensaje: "Error al subir documento",
+      mensaje: "Error interno del servidor",
+      error: error.message
     });
   }
 };
