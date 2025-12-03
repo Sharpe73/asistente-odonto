@@ -1,7 +1,31 @@
 const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
-const { extraerTextoDesdePDF, fragmentarTexto } = require("../utils/pdfProcessor");
+const { procesarPDF } = require("../utils/pdfProcessor");
+
+// =========================================================
+// ✂️ Función local para fragmentar texto
+// =========================================================
+function fragmentarTexto(texto, maxLength = 700) {
+  const palabras = texto.split(" ");
+  const fragmentos = [];
+  let actual = "";
+
+  for (const palabra of palabras) {
+    if ((actual + palabra).length > maxLength) {
+      fragmentos.push(actual.trim());
+      actual = palabra + " ";
+    } else {
+      actual += palabra + " ";
+    }
+  }
+
+  if (actual.trim().length > 0) {
+    fragmentos.push(actual.trim());
+  }
+
+  return fragmentos;
+}
 
 // =========================================================
 // 📌 1. Subir PDF, extraer texto, guardarlo y fragmentarlo
@@ -14,12 +38,12 @@ exports.subirDocumento = async (req, res) => {
     }
 
     const archivo = req.file;
-    const rutaPDF = archivo.path; // ruta física temporal del PDF subido
+    const rutaPDF = archivo.path;
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO USANDO OPENAI
-    const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
+    // 1️⃣ EXTRAER TEXTO DEL PDF
+    const textoExtraído = await procesarPDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
@@ -28,7 +52,7 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 2️⃣ GUARDAR DOCUMENTO EN TABLA 'documentos'
+    // 2️⃣ GUARDAR DOCUMENTO
     const resultadoDoc = await pool.query(
       `INSERT INTO documentos (titulo, ruta_archivo)
        VALUES ($1, $2)
@@ -41,7 +65,7 @@ exports.subirDocumento = async (req, res) => {
     // 3️⃣ FRAGMENTAR TEXTO
     const fragmentos = fragmentarTexto(textoExtraído, 700);
 
-    // 4️⃣ GUARDAR CADA FRAGMENTO EN DB
+    // 4️⃣ GUARDAR FRAGMENTOS
     for (const frag of fragmentos) {
       await pool.query(
         `INSERT INTO documentos_fragmentos (documento_id, texto)
