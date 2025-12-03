@@ -1,7 +1,7 @@
 const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
-const { procesarPDF } = require("../utils/pdfProcessor");
+const { extraerTextoDesdePDF } = require("../utils/pdfProcessor");
 
 // =========================================================
 // ✂️ Función local para fragmentar texto
@@ -32,7 +32,6 @@ function fragmentarTexto(texto, maxLength = 700) {
 // =========================================================
 exports.subirDocumento = async (req, res) => {
   try {
-    // Validar archivo
     if (!req.file) {
       return res.status(400).json({ ok: false, mensaje: "Debes subir un archivo PDF" });
     }
@@ -42,8 +41,8 @@ exports.subirDocumento = async (req, res) => {
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO DEL PDF
-    const textoExtraído = await procesarPDF(rutaPDF);
+    // 1️⃣ EXTRAER TEXTO DEL PDF (FUNCIÓN CORRECTA)
+    const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
