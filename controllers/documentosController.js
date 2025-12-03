@@ -41,7 +41,7 @@ exports.subirDocumento = async (req, res) => {
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO DEL PDF (FUNCIÓN CORRECTA)
+    // 1️⃣ EXTRAER TEXTO DEL PDF
     const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
@@ -51,12 +51,20 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 2️⃣ GUARDAR DOCUMENTO
+    // 2️⃣ GUARDAR DOCUMENTO EN BD
+    // SOLO guardamos lo mínimo obligatorio
     const resultadoDoc = await pool.query(
-      `INSERT INTO documentos (titulo, ruta_archivo)
-       VALUES ($1, $2)
+      `INSERT INTO documentos 
+        (nombre_original, extension, contenido_texto, ruta_archivo, titulo)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [archivo.originalname, archivo.filename]
+      [
+        archivo.originalname,
+        path.extname(archivo.originalname).replace(".", ""),
+        textoExtraído,
+        archivo.filename,
+        archivo.originalname
+      ]
     );
 
     const documentoId = resultadoDoc.rows[0].id;
