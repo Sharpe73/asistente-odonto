@@ -1,6 +1,11 @@
 const pool = require("../database");
 const OpenAI = require("openai");
 
+// ============================
+// 🟦 LOG PARA DEBUG EN RAILWAY
+// ============================
+console.log("🔍 Verificando OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "CARGADA ✔" : "VACÍA ❌");
+
 // Inicializar cliente OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
