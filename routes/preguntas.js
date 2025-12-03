@@ -1,7 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const preguntasController = require("../controllers/preguntasController");
 
-router.post("/preguntar", preguntasController.preguntarSobreDocumento);
+// Importa SOLO la función preguntar
+const { preguntar } = require("../controllers/preguntasController");
+
+// Ruta correcta
+router.post("/preguntar", preguntar);
 
 module.exports = router;
