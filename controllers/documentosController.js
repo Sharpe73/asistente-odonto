@@ -4,7 +4,7 @@ const path = require("path");
 const { extraerTextoDesdePDF } = require("../utils/pdfProcessor");
 
 // =========================================================
-// ✂️ Función local para fragmentar texto
+// ✂️ Fragmentar texto
 // =========================================================
 function fragmentarTexto(texto, maxLength = 700) {
   const palabras = texto.split(" ");
@@ -28,12 +28,15 @@ function fragmentarTexto(texto, maxLength = 700) {
 }
 
 // =========================================================
-// 📌 Subir PDF, extraer texto y fragmentarlo
+// 📌 SUBIR DOCUMENTO PDF
 // =========================================================
 exports.subirDocumento = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ ok: false, mensaje: "Debes subir un archivo PDF" });
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Debes subir un archivo PDF"
+      });
     }
 
     const archivo = req.file;
@@ -51,12 +54,40 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 2️⃣ GUARDAR DOCUMENTO
+    // 2️⃣ GUARDAR DOCUMENTO COMPLETO
+    const bufferOriginal = fs.readFileSync(rutaPDF);
+
     const resultadoDoc = await pool.query(
-      `INSERT INTO documentos (titulo, ruta_archivo)
-       VALUES ($1, $2)
-       RETURNING id`,
-      [archivo.originalname, archivo.filename]
+      `INSERT INTO documentos (
+          nombre_original,
+          extension,
+          tipo,
+          tamano,
+          archivo_original,
+          contenido_texto,
+          paginas,
+          procesado,
+          resumen,
+          metadata,
+          titulo,
+          ruta_archivo
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING id`,
+      [
+        archivo.originalname,
+        path.extname(archivo.originalname),
+        archivo.mimetype,
+        archivo.size,
+        bufferOriginal,
+        textoExtraído,
+        null,             // páginas
+        true,             // procesado
+        null,             // resumen
+        {},               // metadata (json vacío)
+        archivo.originalname,
+        archivo.filename
+      ]
     );
 
     const documentoId = resultadoDoc.rows[0].id;
@@ -64,7 +95,7 @@ exports.subirDocumento = async (req, res) => {
     // 3️⃣ FRAGMENTAR TEXTO
     const fragmentos = fragmentarTexto(textoExtraído, 700);
 
-    // 4️⃣ GUARDAR FRAGMENTOS CON INDEX
+    // 4️⃣ GUARDAR FRAGMENTOS CON ÍNDICE
     for (let i = 0; i < fragmentos.length; i++) {
       await pool.query(
         `INSERT INTO documentos_fragmentos (documento_id, fragmento_index, texto)
