@@ -2,9 +2,15 @@ const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
 const { extraerTextoDesdePDF } = require("../utils/pdfProcessor");
+const OpenAI = require("openai");
+
+// 🔹 Inicializar OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // =========================================================
-// ✂️ Fragmentar texto
+// ✂️ Fragmentar texto (por palabras, max 700 chars)
 // =========================================================
 function fragmentarTexto(texto, maxLength = 700) {
   const palabras = texto.split(" ");
@@ -28,14 +34,14 @@ function fragmentarTexto(texto, maxLength = 700) {
 }
 
 // =========================================================
-// 📌 SUBIR DOCUMENTO PDF
+// 📌 SUBIR DOCUMENTO PDF + GENERAR EMBEDDINGS
 // =========================================================
 exports.subirDocumento = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         ok: false,
-        mensaje: "Debes subir un archivo PDF"
+        mensaje: "Debes subir un archivo PDF",
       });
     }
 
@@ -50,7 +56,7 @@ exports.subirDocumento = async (req, res) => {
     if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
         ok: false,
-        mensaje: "No se pudo extraer texto del PDF"
+        mensaje: "No se pudo extraer texto del PDF",
       });
     }
 
@@ -81,12 +87,12 @@ exports.subirDocumento = async (req, res) => {
         archivo.size,
         bufferOriginal,
         textoExtraído,
-        null,             // páginas
+        null,             // páginas (no calculamos aún)
         true,             // procesado
         null,             // resumen
-        {},               // metadata (json vacío)
+        {},               // metadata JSON vacío
         archivo.originalname,
-        archivo.filename
+        archivo.filename,
       ]
     );
 
@@ -95,23 +101,35 @@ exports.subirDocumento = async (req, res) => {
     // 3️⃣ FRAGMENTAR TEXTO
     const fragmentos = fragmentarTexto(textoExtraído, 700);
 
-    // 4️⃣ GUARDAR FRAGMENTOS CON ÍNDICE
+    // 4️⃣ GENERAR EMBEDDINGS + GUARDAR FRAGMENTOS
     for (let i = 0; i < fragmentos.length; i++) {
+      const textoFragmento = fragmentos[i];
+
+      // 🧠 Generar embedding con OpenAI
+      const embeddingResponse = await openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: textoFragmento,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding; // Array de números
+
+      // 🗄 Guardar fragmento + embedding
       await pool.query(
-        `INSERT INTO documentos_fragmentos (documento_id, fragmento_index, texto)
-         VALUES ($1, $2, $3)`,
-        [documentoId, i + 1, fragmentos[i]]
+        `INSERT INTO documentos_fragmentos 
+          (documento_id, fragmento_index, texto, embedding)
+         VALUES ($1, $2, $3, $4)`,
+        [documentoId, i + 1, textoFragmento, JSON.stringify(embedding)]
       );
     }
 
-    // 5️⃣ BORRAR ARCHIVO TEMPORAL
+    // 5️⃣ ELIMINAR ARCHIVO TEMPORAL
     fs.unlinkSync(rutaPDF);
 
     res.json({
       ok: true,
-      mensaje: "Documento subido y procesado correctamente ✔",
+      mensaje: "Documento subido, fragmentado y embebido correctamente ✔",
       documentoId,
-      total_fragmentos: fragmentos.length
+      total_fragmentos: fragmentos.length,
     });
 
   } catch (error) {
@@ -119,7 +137,7 @@ exports.subirDocumento = async (req, res) => {
     res.status(500).json({
       ok: false,
       mensaje: "Error interno del servidor",
-      error: error.message
+      error: error.message,
     });
   }
 };
