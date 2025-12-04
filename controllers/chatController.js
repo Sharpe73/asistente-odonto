@@ -96,7 +96,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 Procesar pregunta (RAG + MEMORIA)
+// 🤖 Procesar pregunta (RAG + MEMORIA + RESPUESTAS EN ESPAÑOL)
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -113,8 +113,8 @@ exports.preguntar = async (req, res) => {
     // =====================================================
     let normalizada = pregunta
       .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar tildes
-      .replace(/[^\w\s]/g, "") // quitar signos
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w\s]/g, "")
       .trim();
 
     // =====================================================
@@ -124,12 +124,10 @@ exports.preguntar = async (req, res) => {
       "hola", "holaa", "holaaa", "holi", "oli", "ola",
       "hello", "hi", "hey",
       "alo", "alo", "aloo",
-
       "buenas", "wenas",
-      "buen dia", "buenos dias", "buenos dia", "buen dia",
+      "buen dia", "buenos dias",
       "buenas tarde", "buenas tardes",
       "buenas noche", "buenas noches",
-
       "hola como estas", "hola como esta",
       "hola que tal", "hola que haces",
       "como estas", "como va", "que tal"
@@ -138,7 +136,8 @@ exports.preguntar = async (req, res) => {
     const esSaludo = saludos.some(s => normalizada.startsWith(s));
 
     if (esSaludo) {
-      const saludo = "¡Hola! Soy Odonto-Bot, tu asistente virtual. ¿En qué puedo ayudarte hoy?";
+      const saludo =
+        "¡Hola! Soy Odonto-Bot. ¿En qué puedo ayudarte hoy?";
 
       await pool.query(
         `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -163,7 +162,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 2️⃣ Recuperar memoria real
+    // 2️⃣ Recuperar memoria (últimos 10 mensajes)
     // =====================================================
     const memRes = await pool.query(
       `SELECT role, mensaje
@@ -184,15 +183,15 @@ exports.preguntar = async (req, res) => {
     // =====================================================
     // 3️⃣ Embedding de la pregunta
     // =====================================================
-    const pregEmb = await openai.embeddings.create({
+    const emb = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: pregunta,
     });
 
-    const preguntaEmbedding = pregEmb.data[0].embedding;
+    const preguntaEmbedding = emb.data[0].embedding;
 
     // =====================================================
-    // 4️⃣ Traer documentos
+    // 4️⃣ Obtener fragmentos
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -206,7 +205,7 @@ exports.preguntar = async (req, res) => {
         try {
           emb = emb.replace(/{/g, "[").replace(/}/g, "]");
           emb = JSON.parse(emb);
-        } catch (e) {
+        } catch {
           emb = null;
         }
       }
@@ -229,19 +228,33 @@ exports.preguntar = async (req, res) => {
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
     // =====================================================
-    // 6️⃣ Prompt final
+    // 6️⃣ PROMPT ULTRA ESTRICTO (ESPAÑOL + SIN ALUCINAR)
     // =====================================================
     const mensajes = [
       {
         role: "system",
-        content:
-          "Eres Odonto-Bot, un asistente especializado. Usa SOLO el contexto entregado. Si falta información, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'"
+        content: `
+Eres Odonto-Bot, un asistente extremadamente estricto.
+
+REGLAS OBLIGATORIAS:
+
+1. RESPONDES SIEMPRE en español, aunque los documentos estén en inglés.
+2. NO agregas, inventas ni asumes información que no esté literalmente en los documentos.
+3. NO usas conocimientos externos.
+4. Si la información NO aparece en los fragmentos, debes responder EXACTAMENTE:
+   "No tengo información suficiente en el documento para responder eso."
+5. Puedes traducir información del inglés al español, pero SIN agregar detalles.
+6. Usa el contexto entregado únicamente para responder.
+`
       },
+
       ...memoriaChat,
+
       { role: "user", content: pregunta },
+
       {
         role: "assistant",
-        content: `Aquí tienes el contexto relevante proveniente de los documentos:\n${contexto}`
+        content: `Fragmentos relevantes del documento:\n${contexto}`
       }
     ];
 
@@ -265,7 +278,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 9️⃣ Respuesta final
+    // 9️⃣ Enviar respuesta
     // =====================================================
     res.json({
       ok: true,
