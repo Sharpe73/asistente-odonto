@@ -3,12 +3,12 @@ const router = express.Router();
 const chatController = require("../controllers/chatController");
 
 // ================================
-// 🆕 Crear nueva sesión
+// 🆕 Crear nueva sesión ASOCIADA A UN DOCUMENTO
 // ================================
-router.get("/nueva-sesion", chatController.crearSesion);
+router.post("/sesion", chatController.crearSesion);
 
 // ================================
-// 📝 Registrar un mensaje (usuario o bot)
+// 📝 Registrar un mensaje
 // ================================
 router.post("/registrar", chatController.registrarMensaje);
 
@@ -18,7 +18,7 @@ router.post("/registrar", chatController.registrarMensaje);
 router.get("/historial/:session_id", chatController.obtenerHistorial);
 
 // ================================
-// 🤖 Bot: procesar pregunta y responder
+// 🤖 Bot: procesar pregunta con RAG
 // ================================
 router.post("/preguntar", chatController.preguntar);
 
