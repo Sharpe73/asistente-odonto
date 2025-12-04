@@ -77,11 +77,13 @@ exports.obtenerHistorial = async (req, res) => {
 };
 
 // =========================================================
-// 🆕 Crear sesión (requiere documento_id)
+// 🆕 Crear sesión (ACEPTA documento_id POR BODY O QUERY)
 // =========================================================
 exports.crearSesion = async (req, res) => {
   try {
-    const documento_id = req.query.documento_id;
+    const documento_id = req.body.documento_id || req.query.documento_id;
+
+    console.log("📥 documento_id recibido:", documento_id);
 
     if (!documento_id) {
       return res.status(400).json({
@@ -170,15 +172,13 @@ exports.preguntar = async (req, res) => {
         ...f,
         score: cosineSimilarity(preguntaEmbedding, f.embedding)
       }))
-      .filter(f => f.score > 0) // elimina fragmentos inválidos automáticamente
+      .filter(f => f.score > 0)
       .sort((a, b) => b.score - a.score);
 
     let top = puntuados.slice(0, 5);
     let contexto = top.map(f => f.texto).join("\n\n");
 
-    if (top.length === 0) {
-      contexto = "";
-    }
+    if (top.length === 0) contexto = "";
 
     // 6️⃣ Generar respuesta con OpenAI
     const completion = await openai.chat.completions.create({
