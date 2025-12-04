@@ -108,6 +108,32 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
+    const normalizada = pregunta.toLowerCase().trim();
+
+    // =====================================================
+    // 🆕 RESPUESTAS PARA TODOS LOS SALUDOS POSIBLES
+    // =====================================================
+    const saludosRegex =
+      /^(hola|hello|hi|holi|ola|alo|aló|wenas|buenas|buen día|buenos días|buenas tardes|buenas noches|qué tal|que tal|como estas|cómo estás|como va|cómo va|hola que tal|hola como estas|hola cómo estás)$/i;
+
+    if (saludosRegex.test(normalizada)) {
+      const saludo =
+        "¡Hola! Soy Odonto-Bot, tu asistente virtual. ¿En qué puedo ayudarte hoy?";
+
+      // Guardar en historial
+      await pool.query(
+        `INSERT INTO chat_historial (session_id, role, mensaje)
+         VALUES ($1, 'assistant', $2)`,
+        [session_id, saludo]
+      );
+
+      return res.json({
+        ok: true,
+        respuesta: saludo,
+        fragmentos_usados: 0
+      });
+    }
+
     // =====================================================
     // 1️⃣ Guardar pregunta del usuario
     // =====================================================
@@ -198,16 +224,13 @@ exports.preguntar = async (req, res) => {
           "Eres Odonto-Bot, un asistente especializado. Usa SOLO el contexto entregado. Si falta información, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'"
       },
 
-      // 🧠 Aquí va la memoria REAL
       ...memoriaChat,
 
-      // 🧾 Nueva pregunta del usuario, sin texto artificial
       {
         role: "user",
         content: pregunta
       },
 
-      // 📚 Contexto del documento como mensaje del asistente
       {
         role: "assistant",
         content: `Aquí tienes el contexto relevante proveniente de los documentos:\n${contexto}`
