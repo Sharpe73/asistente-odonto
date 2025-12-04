@@ -15,7 +15,7 @@ function cosineSimilarity(vecA, vecB) {
 
   let dot = 0, normA = 0, normB = 0;
   for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];
+    dot += vecA[i] * vecA[i];
     normA += vecA[i] * vecA[i];
     normB += vecB[i] * vecB[i];
   }
@@ -91,6 +91,55 @@ async function expandirPreguntaCorta(session_id, pregunta) {
 
   return `${ultima}. Además, respecto a tu última pregunta: ${pregunta}`;
 }
+
+// =========================================================
+// 📌 Registrar mensaje (NECESARIO PARA EL ROUTER)
+// =========================================================
+exports.registrarMensaje = async (req, res) => {
+  try {
+    const { session_id, role, mensaje } = req.body;
+
+    if (!session_id)
+      return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
+
+    if (!["user", "assistant"].includes(role))
+      return res.status(400).json({ ok: false, mensaje: "role debe ser user o assistant" });
+
+    await pool.query(
+      `INSERT INTO chat_historial (session_id, role, mensaje)
+       VALUES ($1, $2, $3)`,
+      [session_id, role, mensaje]
+    );
+
+    res.json({ ok: true });
+
+  } catch (e) {
+    console.error("Error registrar mensaje:", e);
+    res.status(500).json({ ok: false });
+  }
+};
+
+// =========================================================
+// 📌 Obtener historial (NECESARIO PARA EL ROUTER)
+// =========================================================
+exports.obtenerHistorial = async (req, res) => {
+  try {
+    const { session_id } = req.params;
+
+    const result = await pool.query(
+      `SELECT * FROM chat_historial
+       WHERE session_id = $1
+       ORDER BY creado_en ASC`,
+      [session_id]
+    );
+
+    res.json({ ok: true, historial: result.rows });
+
+  } catch (e) {
+    console.error("Error historial:", e);
+    res.status(500).json({ ok: false });
+  }
+};
 
 // =========================================================
 // 🆕 Crear sesión
@@ -189,20 +238,14 @@ exports.preguntar = async (req, res) => {
     // =====================================================
     // Ranking RAG
     // =====================================================
-    let top = [];
-
-    if (fragmentos.length === 1) {
-      top = fragmentos;
-    } else {
-      top = fragmentos
-        .map(f => ({
-          ...f,
-          score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
-        }))
-        .filter(f => f.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
-    }
+    const top = fragmentos
+      .map(f => ({
+        ...f,
+        score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
+      }))
+      .filter(f => f.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
