@@ -30,7 +30,9 @@ exports.registrarMensaje = async (req, res) => {
   try {
     const { session_id, role, mensaje } = req.body;
 
-    if (!session_id) return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
+    if (!session_id)
+      return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
+
     if (!["user", "assistant"].includes(role))
       return res.status(400).json({ ok: false, mensaje: "role debe ser user o assistant" });
 
@@ -118,16 +120,16 @@ exports.preguntar = async (req, res) => {
       .trim();
 
     // =====================================================
-    // 🆕 LISTA DE SALUDOS AMPLIADA
+    // 🆕 SALUDOS
     // =====================================================
     const saludos = [
       "hola", "holaa", "holaaa", "holi", "oli", "ola",
       "hello", "hi", "hey",
-      "alo", "alo", "aloo",
+      "alo", "aloo",
       "buenas", "wenas",
       "buen dia", "buenos dias",
-      "buenas tarde", "buenas tardes",
-      "buenas noche", "buenas noches",
+      "buenas tardes",
+      "buenas noches",
       "hola como estas", "hola como esta",
       "hola que tal", "hola que haces",
       "como estas", "como va", "que tal"
@@ -213,14 +215,13 @@ exports.preguntar = async (req, res) => {
     });
 
     // =====================================================
-    // 5️⃣ RAG FIX: SI EL PDF TIENE SOLO 1 FRAGMENTO → USAR TODO EL DOCUMENTO
+    // 5️⃣ RAG FIX: si el documento tiene solo un fragmento → usar todo
     // =====================================================
     let top = [];
 
     if (fragmentos.length === 1) {
-      top = fragmentos;  // usar el documento completo
+      top = fragmentos;
     } else {
-      // Ranking normal
       const puntuados = fragmentos
         .map(f => ({
           ...f,
@@ -243,15 +244,15 @@ exports.preguntar = async (req, res) => {
         content: `
 Eres Odonto-Bot, un asistente extremadamente estricto.
 
-REGLAS OBLIGATORIAS:
+REGLAS:
 
 1. RESPONDES SIEMPRE en español.
-2. NO agregas, inventas ni asumes información que no esté literalmente en el documento.
+2. NO inventas, no asumes, no completas datos.
 3. NO usas conocimientos externos.
-4. Si la información NO aparece en los fragmentos, responde EXACTAMENTE:
+4. SI ALGO NO APARECE EN EL DOCUMENTO, respondes EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
-5. Puedes traducir texto del documento.
-6. Usa exclusivamente el contexto entregado.
+5. Puedes traducir del inglés sin agregar nada adicional.
+6. Usa EXCLUSIVAMENTE los fragmentos entregados.
 `
       },
 
@@ -266,11 +267,11 @@ REGLAS OBLIGATORIAS:
     ];
 
     // =====================================================
-    // 7️⃣ Llamado a OpenAI
+    // 7️⃣ Llamado a OpenAI (FIX: mensajes, no messages)
     // =====================================================
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: mensajes
+      messages: mensajes       // ← FIX aplicado
     });
 
     const respuesta = completion.choices[0].message.content;
