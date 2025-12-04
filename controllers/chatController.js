@@ -205,8 +205,8 @@ exports.preguntar = async (req, res) => {
     ];
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages
+     model: "gpt-4o-mini",
+     messages: mensajes
     });
 
     const respuesta = completion.choices[0].message.content;
