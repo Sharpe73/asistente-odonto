@@ -3,11 +3,63 @@ const OpenAI = require("openai");
 
 // Inicializar cliente OpenAI
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 // =========================================================
-// 🤖 CONTROLADOR: Responder preguntas usando IA + fragmentos
+// 🧮 Similitud coseno
+// =========================================================
+function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || !Array.isArray(vecA) || !Array.isArray(vecB)) return -1;
+
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dot += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+
+  if (normA === 0 || normB === 0) return -1;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+// =========================================================
+// 🤖 IA ULTRA ESTRICTA — SOLO PDF, SOLO ESPAÑOL, SIN INVENTAR
+// =========================================================
+async function generarRespuestaIA(pregunta, fragmentosTexto) {
+  const mensajes = [
+    {
+      role: "system",
+      content: `
+Eres un asistente extremadamente estricto especializado en documentos odontológicos.
+
+REGLAS:
+1. Respondes SIEMPRE en español.
+2. NO inventas nada.
+3. NO usas información externa.
+4. SOLO respondes usando los fragmentos entregados.
+5. Si la información NO aparece literal, responde:
+   "No tengo información suficiente en el documento para responder eso."
+6. Puedes traducir contenido del inglés al español sin agregar detalles.
+`
+    },
+    {
+      role: "assistant",
+      content: `Fragmentos relevantes del documento:\n${fragmentosTexto}`
+    },
+    { role: "user", content: pregunta }
+  ];
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: mensajes,
+  });
+
+  return completion.choices[0].message.content;
+}
+
+// =========================================================
+// 🤖 CONTROLADOR FINAL: embeddings + similitud + IA segura
 // =========================================================
 exports.responderPregunta = async (req, res) => {
   try {
@@ -20,59 +72,66 @@ exports.responderPregunta = async (req, res) => {
       });
     }
 
-    // 1️⃣ OBTENER FRAGMENTOS DEL DOCUMENTO
-    const resultado = await pool.query(
-      `SELECT fragmento_index, texto 
-       FROM documentos_fragmentos 
-       WHERE documento_id = $1
-       ORDER BY fragmento_index ASC`,
+    // 1️⃣ OBTENER FRAGMENTOS + EMBEDDINGS
+    const result = await pool.query(
+      `SELECT fragmento_index, texto, embedding
+       FROM documentos_fragmentos
+       WHERE documento_id = $1`,
       [documentoId]
     );
 
-    if (resultado.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         ok: false,
         mensaje: "No existen fragmentos para este documento"
       });
     }
 
-    // 2️⃣ UNIR FRAGMENTOS para contexto
-    const contexto = resultado.rows
-      .map(f => `Fragmento ${f.fragmento_index}:\n${f.texto}`)
-      .join("\n\n");
-
-    // 3️⃣ CREAR PROMPT PARA OPENAI
-    const prompt = `
-Eres un asistente experto en odontología.  
-Responde a la pregunta del usuario SOLO usando la información contenida en el siguiente documento:
-
-=========================
-DOCUMENTO:
-${contexto}
-=========================
-
-PREGUNTA DEL USUARIO:
-${pregunta}
-
-Da una respuesta clara, profesional y sin inventar información que no aparezca en el documento.
-`;
-
-    // 4️⃣ CONSULTAR OPENAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "Eres un asistente especializado en documentos clínicos odontológicos." },
-        { role: "user", content: prompt }
-      ]
+    // 2️⃣ EMBEDDING DE LA PREGUNTA
+    const embPregunta = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: pregunta,
     });
 
-    const respuesta = completion.choices[0].message.content;
+    const preguntaEmbedding = embPregunta.data[0].embedding;
 
-    // 5️⃣ RESPUESTA FINAL
+    // 3️⃣ PROCESAR FRAGMENTOS
+    const fragmentosProcesados = result.rows.map(f => {
+      let emb = f.embedding;
+
+      if (typeof emb === "string") {
+        try {
+          emb = emb.replace(/{/g, "[").replace(/}/g, "]");
+          emb = JSON.parse(emb);
+        } catch {
+          emb = null;
+        }
+      }
+
+      return {
+        index: f.fragmento_index,
+        texto: f.texto,
+        embedding: emb,
+        score: emb ? cosineSimilarity(preguntaEmbedding, emb) : -1
+      };
+    });
+
+    // 4️⃣ OBTENER TOP 5 FRAGMENTOS
+    const top = fragmentosProcesados
+      .filter(f => f.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    const contexto = top.map(f => f.texto).join("\n\n");
+
+    // 5️⃣ OBTENER RESPUESTA ULTRA ESTRICTA
+    const respuestaIA = await generarRespuestaIA(pregunta, contexto);
+
+    // 6️⃣ RESPONDER
     res.json({
       ok: true,
-      mensaje: "Respuesta generada correctamente",
-      respuesta
+      respuesta: respuestaIA,
+      fragmentos_usados: top.length
     });
 
   } catch (error) {

@@ -136,8 +136,7 @@ exports.preguntar = async (req, res) => {
     const esSaludo = saludos.some(s => normalizada.startsWith(s));
 
     if (esSaludo) {
-      const saludo =
-        "¡Hola! Soy Odonto-Bot. ¿En qué puedo ayudarte hoy?";
+      const saludo = "¡Hola! Soy Odonto-Bot. ¿En qué puedo ayudarte hoy?";
 
       await pool.query(
         `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -241,10 +240,14 @@ REGLAS OBLIGATORIAS:
 1. RESPONDES SIEMPRE en español, aunque los documentos estén en inglés.
 2. NO agregas, inventas ni asumes información que no esté literalmente en los documentos.
 3. NO usas conocimientos externos.
-4. Si la información NO aparece en los fragmentos, debes responder EXACTAMENTE:
+4. Si la información NO aparece en los fragmentos, responde EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
-5. Puedes traducir información del inglés al español, pero SIN agregar detalles.
-6. Usa el contexto entregado únicamente para responder.
+5. Puedes traducir información del inglés al español, pero SIN agregar nada.
+6. Usa EXCLUSIVAMENTE el contexto entregado.
+7. Si el contexto está vacío o es irrelevante, devuelve la frase obligatoria.
+8. No completes ideas, no infieras significados, no supongas nada.
+9. Está prohibido mencionar información que no esté literalmente en el PDF.
+10. No puedes citar páginas, autores o referencias si no aparecen en los fragmentos.
 `
       },
 

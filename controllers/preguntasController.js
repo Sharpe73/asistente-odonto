@@ -2,43 +2,66 @@ const pool = require("../database");
 const OpenAI = require("openai");
 
 // ============================
-// 🟦 LOG PARA DEBUG EN RAILWAY
+// 🔧 Cargar OpenAI
 // ============================
-console.log("🔍 Verificando OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "CARGADA ✔" : "VACÍA ❌");
-
-// Inicializar cliente OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 // ========================================================
-// 🧠 Función IA: Generar respuesta basada SOLO en el PDF
+// 🧮 Función: calcular similitud coseno
 // ========================================================
-async function generarRespuestaIA(pregunta, contexto) {
-  const prompt = `
-Eres un asistente especializado en documentos odontológicos.
-Responde SOLO usando la información del siguiente contenido:
+function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || !Array.isArray(vecA) || !Array.isArray(vecB)) return -1;
 
-------------------------
-${contexto}
-------------------------
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dot += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
 
-Pregunta del usuario: "${pregunta}"
+  if (normA === 0 || normB === 0) return -1;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
-Si la respuesta no está en el contenido, responde:
-"No tengo información suficiente en el documento para responder eso."
-  `;
+// ========================================================
+// 😎 IA ULTRA ESTRICTA — SOLO PDF, SOLO ESPAÑOL, CERO INVENTOS
+// ========================================================
+async function generarRespuestaIA(pregunta, fragmentosTexto) {
+  const systemPrompt = `
+Eres un asistente EXTREMADAMENTE ESTRICTO especializado en documentos odontológicos.
+
+REGLAS OBLIGATORIAS:
+1. Respondes SIEMPRE en español.
+2. NO inventas información.
+3. NO usas conocimientos externos.
+4. SOLO puedes usar información que esté en los fragmentos entregados.
+5. Si algo NO aparece en los fragmentos, debes responder EXACTAMENTE:
+   "No tengo información suficiente en el documento para responder eso."
+6. Puedes traducir del inglés al español, pero SIN agregar nada adicional.
+7. No completes ideas, no asumas significados, no interpretes más allá del texto literal.
+`;
+
+  const mensajes = [
+    { role: "system", content: systemPrompt },
+    {
+      role: "assistant",
+      content: `Fragmentos relevantes del documento:\n${fragmentosTexto}`
+    },
+    { role: "user", content: pregunta }
+  ];
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
+    messages: mensajes,
   });
 
   return completion.choices[0].message.content;
 }
 
 // ========================================================
-// 📌 Controlador principal: Buscar fragmentos + IA
+// 📌 Controlador principal: Embeddings + RAG real
 // ========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -51,12 +74,11 @@ exports.preguntar = async (req, res) => {
       });
     }
 
-    // 1️⃣ Buscar fragmentos del documento
+    // 1️⃣ OBTENER TODOS LOS FRAGMENTOS + EMBEDDINGS
     const result = await pool.query(
-      `SELECT fragmento_index, texto
+      `SELECT fragmento_index, texto, embedding
        FROM documentos_fragmentos
-       WHERE documento_id = $1
-       ORDER BY fragmento_index ASC`,
+       WHERE documento_id = $1`,
       [documentoId]
     );
 
@@ -67,17 +89,51 @@ exports.preguntar = async (req, res) => {
       });
     }
 
-    // 2️⃣ Unir fragmentos como contexto
-    const contexto = result.rows.map(f => f.texto).join("\n");
+    // 2️⃣ EMBEDDING de la pregunta
+    const embPregunta = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: pregunta,
+    });
 
-    // 3️⃣ Llamar a OpenAI
+    const preguntaEmbedding = embPregunta.data[0].embedding;
+
+    // 3️⃣ PROCESAR fragmentos
+    const fragmentosProcesados = result.rows.map(f => {
+      let emb = f.embedding;
+
+      if (typeof emb === "string") {
+        try {
+          emb = emb.replace(/{/g, "[").replace(/}/g, "]");
+          emb = JSON.parse(emb);
+        } catch (e) {
+          emb = null;
+        }
+      }
+
+      return {
+        index: f.fragmento_index,
+        texto: f.texto,
+        embedding: emb,
+        score: emb ? cosineSimilarity(preguntaEmbedding, emb) : -1,
+      };
+    });
+
+    // 4️⃣ FILTRAR Y ORDENAR POR SIMILITUD
+    const top = fragmentosProcesados
+      .filter(f => f.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    const contexto = top.map(f => f.texto).join("\n\n");
+
+    // 5️⃣ OBLIGAR respuesta estricta
     const respuestaIA = await generarRespuestaIA(pregunta, contexto);
 
-    // 4️⃣ Enviar respuesta
+    // 6️⃣ ENVIAR RESPUESTA
     res.json({
       ok: true,
-      mensaje: "Respuesta generada por IA",
       respuesta: respuestaIA,
+      fragmentos_usados: top.length,
     });
 
   } catch (error) {
@@ -86,7 +142,7 @@ exports.preguntar = async (req, res) => {
     res.status(500).json({
       ok: false,
       mensaje: "Error interno del servidor",
-      error: error.message
+      error: error.message,
     });
   }
 };
