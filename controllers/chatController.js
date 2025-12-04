@@ -129,7 +129,6 @@ exports.preguntar = async (req, res) => {
       [session_id]
     );
 
-    // Ordenarlos de antiguo → reciente
     const historial = memRes.rows.reverse();
 
     const memoriaChat = historial.map(m => ({
@@ -155,11 +154,25 @@ exports.preguntar = async (req, res) => {
       FROM documentos_fragmentos
     `);
 
-    const fragmentos = fragRes.rows.map(f => ({
-      index: f.fragmento_index,
-      texto: f.texto,
-      embedding: f.embedding
-    }));
+    const fragmentos = fragRes.rows.map(f => {
+      let emb = f.embedding;
+
+      if (typeof emb === "string") {
+        try {
+          emb = emb.replace(/{/g, "[").replace(/}/g, "]");
+          emb = JSON.parse(emb);
+        } catch (e) {
+          console.error("❌ Error convirtiendo embedding:", f.embedding);
+          emb = null;
+        }
+      }
+
+      return {
+        index: f.fragmento_index,
+        texto: f.texto,
+        embedding: emb
+      };
+    });
 
     // =====================================================
     // 5️⃣ Calcular similitud coseno
@@ -167,9 +180,9 @@ exports.preguntar = async (req, res) => {
     const puntuados = fragmentos
       .map(f => ({
         ...f,
-        score: cosineSimilarity(preguntaEmbedding, f.embedding)
+        score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
       }))
-      .filter(f => f.score > 0)
+      .filter(f => f.embedding && f.score > 0)
       .sort((a, b) => b.score - a.score);
 
     const top = puntuados.slice(0, 5);
@@ -208,7 +221,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 8️⃣ Respuesta final
+    // 8️⃣ Enviar respuesta final
     // =====================================================
     res.json({
       ok: true,
