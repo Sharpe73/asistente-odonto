@@ -96,7 +96,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 Procesar pregunta (RAG GLOBAL + MEMORIA DE CHAT)
+// 🤖 Procesar pregunta (RAG GLOBAL + MEMORIA REAL DE CHAT)
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -118,7 +118,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 2️⃣ Recuperar últimos 10 mensajes DE MEMORIA
+    // 2️⃣ Recuperar memoria real (últimos 10 mensajes)
     // =====================================================
     const memRes = await pool.query(
       `SELECT role, mensaje
@@ -147,7 +147,7 @@ exports.preguntar = async (req, res) => {
     const preguntaEmbedding = pregEmb.data[0].embedding;
 
     // =====================================================
-    // 4️⃣ Obtener TODOS los fragmentos de TODOS los documentos
+    // 4️⃣ Traer todos los fragmentos de todos los documentos
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -175,7 +175,7 @@ exports.preguntar = async (req, res) => {
     });
 
     // =====================================================
-    // 5️⃣ Calcular similitud coseno
+    // 5️⃣ Similaridad coseno
     // =====================================================
     const puntuados = fragmentos
       .map(f => ({
@@ -189,7 +189,7 @@ exports.preguntar = async (req, res) => {
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
     // =====================================================
-    // 6️⃣ Llamar a OpenAI con MEMORIA + CONTEXTO
+    // 6️⃣ Construir mensajes para OpenAI (MEMORIA + CONTEXTO)
     // =====================================================
     const mensajes = [
       {
@@ -197,22 +197,35 @@ exports.preguntar = async (req, res) => {
         content:
           "Eres Odonto-Bot, un asistente especializado. Usa SOLO el contexto entregado. Si falta información, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'"
       },
+
+      // 🧠 Aquí va la memoria REAL
       ...memoriaChat,
+
+      // 🧾 Nueva pregunta del usuario, sin texto artificial
       {
         role: "user",
-        content: `Contexto del documento:\n${contexto}\n\nPregunta: ${pregunta}`
+        content: pregunta
+      },
+
+      // 📚 Contexto del documento como mensaje del asistente
+      {
+        role: "assistant",
+        content: `Aquí tienes el contexto relevante proveniente de los documentos:\n${contexto}`
       }
     ];
 
+    // =====================================================
+    // 7️⃣ Llamado a OpenAI
+    // =====================================================
     const completion = await openai.chat.completions.create({
-     model: "gpt-4o-mini",
-     messages: mensajes
+      model: "gpt-4o-mini",
+      messages: mensajes
     });
 
     const respuesta = completion.choices[0].message.content;
 
     // =====================================================
-    // 7️⃣ Guardar respuesta del asistente
+    // 8️⃣ Guardar respuesta del asistente
     // =====================================================
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -221,7 +234,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 8️⃣ Enviar respuesta final
+    // 9️⃣ Enviar respuesta al frontend
     // =====================================================
     res.json({
       ok: true,
