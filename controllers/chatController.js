@@ -7,9 +7,13 @@ const openai = new OpenAI({
 });
 
 // =========================================================
-// 🧮 Similitud coseno entre dos vectores
+// 🧮 Similitud coseno segura (tolera vectores inválidos)
 // =========================================================
 function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || !Array.isArray(vecA) || !Array.isArray(vecB)) {
+    return -1; // fuerza score muy bajo → automáticamente ignorado
+  }
+
   let dot = 0.0;
   let normA = 0.0;
   let normB = 0.0;
@@ -20,66 +24,70 @@ function cosineSimilarity(vecA, vecB) {
     normB += vecB[i] * vecB[i];
   }
 
+  if (normA === 0 || normB === 0) return -1;
+
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 // =========================================================
-// 📝 Registrar mensaje en historial
+// 📝 Registrar mensaje
 // =========================================================
 exports.registrarMensaje = async (req, res) => {
   try {
     const { session_id, role, mensaje } = req.body;
 
-    if (!session_id) {
-      return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
-    }
-
-    if (!role || (role !== "user" && role !== "assistant")) {
-      return res.status(400).json({ ok: false, mensaje: "role inválido" });
-    }
+    if (!session_id) return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
+    if (!role || (role !== "user" && role !== "assistant"))
+      return res.status(400).json({ ok: false, mensaje: "role debe ser 'user' o 'assistant'" });
 
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
-       VALUES ($1, $2, $3)`,
+      VALUES ($1, $2, $3)`,
       [session_id, role, mensaje]
     );
 
-    res.json({ ok: true });
+    res.json({ ok: true, mensaje: "Mensaje registrado correctamente" });
+
   } catch (error) {
+    console.error("Error al registrar mensaje:", error);
     res.status(500).json({ ok: false, mensaje: "Error en el servidor" });
   }
 };
 
 // =========================================================
-// 📚 Obtener historial de conversación
+// 📚 Obtener historial
 // =========================================================
 exports.obtenerHistorial = async (req, res) => {
   try {
     const { session_id } = req.params;
 
     const result = await pool.query(
-      `SELECT role, mensaje 
-       FROM chat_historial
-       WHERE session_id = $1
-       ORDER BY creado_en ASC`,
+      `SELECT * FROM chat_historial
+      WHERE session_id = $1
+      ORDER BY creado_en ASC`,
       [session_id]
     );
 
     res.json({ ok: true, historial: result.rows });
+
   } catch (error) {
-    res.status(500).json({ ok: false });
+    console.error("Error obteniendo historial:", error);
+    res.status(500).json({ ok: false, mensaje: "Error en el servidor" });
   }
 };
 
 // =========================================================
-// 🆕 Crear sesión vinculada a documento
+// 🆕 Crear sesión (requiere documento_id)
 // =========================================================
 exports.crearSesion = async (req, res) => {
   try {
-    const { documento_id } = req.body;
+    const documento_id = req.query.documento_id;
 
     if (!documento_id) {
-      return res.status(400).json({ ok: false, mensaje: "documento_id requerido" });
+      return res.status(400).json({
+        ok: false,
+        mensaje: "documento_id es obligatorio para crear una sesión"
+      });
     }
 
     const session_id = generarSessionId();
@@ -94,146 +102,93 @@ exports.crearSesion = async (req, res) => {
       ok: true,
       session_id,
       documento_id,
+      mensaje: "Sesión creada correctamente",
     });
+
   } catch (error) {
-    res.status(500).json({ ok: false });
+    console.error("Error creando sesión:", error);
+    res.status(500).json({ ok: false, mensaje: "Error en el servidor" });
   }
 };
 
 // =========================================================
-// 🤖 PROCESAR PREGUNTA — RAG SEMÁNTICO + MEMORIA
+// 🤖 Procesar pregunta con RAG + memoria
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
     const { session_id, pregunta } = req.body;
 
-    if (!session_id) {
+    if (!session_id)
       return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
-    }
 
-    if (!pregunta || pregunta.trim() === "") {
+    if (!pregunta || pregunta.trim() === "")
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
-    }
 
-    // ---------------------------------------------
-    // 1️⃣ Recuperar documento asociado a la sesión
-    // ---------------------------------------------
-    const sesionResult = await pool.query(
+    // 1️⃣ Buscar documento asociado
+    const sesRes = await pool.query(
       `SELECT documento_id FROM sesiones WHERE session_id = $1`,
       [session_id]
     );
 
-    if (sesionResult.rows.length === 0) {
+    if (sesRes.rows.length === 0)
       return res.status(404).json({ ok: false, mensaje: "Sesión no encontrada" });
-    }
 
-    const documento_id = sesionResult.rows[0].documento_id;
+    const documento_id = sesRes.rows[0].documento_id;
 
-    // ---------------------------------------------
     // 2️⃣ Guardar pregunta en historial
-    // ---------------------------------------------
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
-       VALUES ($1, 'user', $2)`,
+      VALUES ($1, 'user', $2)`,
       [session_id, pregunta]
     );
 
-    // ---------------------------------------------
-    // 3️⃣ Obtener historial para memoria conversacional
-    // ---------------------------------------------
-    const historialDB = await pool.query(
-      `SELECT role, mensaje 
-       FROM chat_historial
-       WHERE session_id = $1
-       ORDER BY creado_en ASC`,
-      [session_id]
-    );
-
-    const mensajesPrevios = historialDB.rows.map((m) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.mensaje,
-    }));
-
-    // ---------------------------------------------
-    // 4️⃣ Embedding de la pregunta
-    // ---------------------------------------------
-    const preguntaEmb = await openai.embeddings.create({
+    // 3️⃣ Embedding de la pregunta
+    const pregEmb = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: pregunta,
     });
 
-    const preguntaEmbedding = preguntaEmb.data[0].embedding;
+    const preguntaEmbedding = pregEmb.data[0].embedding;
 
-    // ---------------------------------------------
-    // 5️⃣ Obtener fragmentos del documento
-    // ---------------------------------------------
-    const fragBD = await pool.query(
-      `SELECT texto, embedding 
-       FROM documentos_fragmentos 
-       WHERE documento_id = $1`,
+    // 4️⃣ Obtener fragmentos del documento
+    const fragRes = await pool.query(
+      `SELECT fragmento_index, texto, embedding
+      FROM documentos_fragmentos
+      WHERE documento_id = $1`,
       [documento_id]
     );
 
-    if (fragBD.rows.length === 0) {
-      // ❗ Documento sin texto indexado → responder fijo
-      const msg = "Lo siento, no tengo esa información en los documentos cargados.";
-
-      await pool.query(
-        `INSERT INTO chat_historial (session_id, role, mensaje)
-         VALUES ($1, 'assistant', $2)`,
-        [session_id, msg]
-      );
-
-      return res.json({ ok: true, respuesta: msg });
-    }
-
-    // ---------------------------------------------
-    // 6️⃣ Calcular similitud coseno por cada fragmento
-    // ---------------------------------------------
-    const fragmentos = fragBD.rows.map((f) => ({
+    const fragmentos = fragRes.rows.map(f => ({
+      index: f.fragmento_index,
       texto: f.texto,
-      embedding: JSON.parse(f.embedding),
+      embedding: f.embedding ? JSON.parse(f.embedding) : null,
     }));
 
-    const fragmentosRanked = fragmentos
-      .map((frag) => ({
-        texto: frag.texto,
-        score: cosineSimilarity(preguntaEmbedding, frag.embedding),
+    // 5️⃣ Calcular similitud coseno y filtrar NULL
+    const puntuados = fragmentos
+      .map(f => ({
+        ...f,
+        score: cosineSimilarity(preguntaEmbedding, f.embedding)
       }))
+      .filter(f => f.score > 0) // elimina fragmentos inválidos automáticamente
       .sort((a, b) => b.score - a.score);
 
-    // ---------------------------------------------
-    // 7️⃣ Seleccionar top 5
-    // ---------------------------------------------
-    const topFragmentos = fragmentosRanked.slice(0, 5);
+    let top = puntuados.slice(0, 5);
+    let contexto = top.map(f => f.texto).join("\n\n");
 
-    // ❗ Si no hay fragmentos relevantes → responder fijo
-    if (!topFragmentos || topFragmentos.length === 0 || topFragmentos[0].score < 0.15) {
-      const msg = "Lo siento, no tengo esa información en los documentos cargados.";
-
-      await pool.query(
-        `INSERT INTO chat_historial (session_id, role, mensaje)
-         VALUES ($1, 'assistant', $2)`,
-        [session_id, msg]
-      );
-
-      return res.json({ ok: true, respuesta: msg });
+    if (top.length === 0) {
+      contexto = "";
     }
 
-    const contexto = topFragmentos.map((f) => f.texto).join("\n\n");
-
-    // ---------------------------------------------
-    // 8️⃣ Llamar a OpenAI con MEMORIA + CONTEXTO
-    // ---------------------------------------------
+    // 6️⃣ Generar respuesta con OpenAI
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
           content:
-            "Eres Odonto-Bot, un asistente odontológico. Responde SOLO en base al contexto del documento y el historial. Si no existe información, responde exactamente: 'Lo siento, no tengo esa información en los documentos cargados.'",
+            "Eres Odonto-Bot. Responde SOLO usando información del contexto. Si no está en el documento, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'",
         },
-        ...mensajesPrevios,
         {
           role: "user",
           content: `Contexto del documento:\n${contexto}\n\nPregunta: ${pregunta}`,
@@ -241,24 +196,27 @@ exports.preguntar = async (req, res) => {
       ],
     });
 
-    const respuestaIA = completion.choices[0].message.content;
+    const respuesta = completion.choices[0].message.content;
 
-    // ---------------------------------------------
-    // 9️⃣ Guardar respuesta
-    // ---------------------------------------------
+    // 7️⃣ Guardar respuesta
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
-       VALUES ($1, 'assistant', $2)`,
-      [session_id, respuestaIA]
+      VALUES ($1, 'assistant', $2)`,
+      [session_id, respuesta]
     );
 
     res.json({
       ok: true,
-      respuesta: respuestaIA,
+      respuesta,
+      fragmentos_usados: top.length
     });
 
   } catch (error) {
-    console.error("❌ ERROR:", error);
-    res.status(500).json({ ok: false, mensaje: "Error interno del servidor" });
+    console.error("❌ Error procesando pregunta:", error);
+    res.status(500).json({
+      ok: false,
+      mensaje: "Error interno del servidor",
+      error: error.message,
+    });
   }
 };
