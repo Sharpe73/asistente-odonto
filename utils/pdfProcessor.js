@@ -6,19 +6,47 @@ const fs = require("fs");
 let pdfParse = null;
 
 try {
-  // Carga pdf-parse
   const lib = require("pdf-parse");
-
-  // pdf-parse a veces exporta la función directo, otras veces en default
   pdfParse = typeof lib === "function" ? lib : lib.default;
-  
+
   if (typeof pdfParse !== "function") {
-    console.error("❌ pdf-parse no entregó una función. Valor recibido:", pdfParse);
+    console.error("❌ pdf-parse no entregó una función válida:", pdfParse);
     pdfParse = null;
   }
-
 } catch (err) {
   console.error("❌ No se pudo cargar pdf-parse:", err);
+}
+
+
+// ======================================================
+// 🧹 LIMPIAR TEXTO EXTRAÍDO DEL PDF
+// ======================================================
+function limpiarTexto(raw) {
+  if (!raw) return "";
+
+  let texto = raw;
+
+  // Unir palabras cortadas con guion al final de línea
+  texto = texto.replace(/-\n/g, "");
+
+  // Remover saltos de línea múltiples
+  texto = texto.replace(/\n{2,}/g, " ");
+
+  // Remover saltos simples reemplazando por espacio
+  texto = texto.replace(/\n/g, " ");
+
+  // Remover múltiples espacios
+  texto = texto.replace(/\s{2,}/g, " ");
+
+  // Remover numeraciones típicas de páginas
+  texto = texto.replace(/\bPage\s*\d+\b/gi, "");
+  texto = texto.replace(/\b\d+\s*\/\s*\d+\b/g, ""); // tipo 3/20
+
+  // Remover encabezados o footers comunes
+  texto = texto.replace(/©.*?(\.|\s)/g, "");
+  texto = texto.replace(/All rights reserved.*/gi, "");
+
+  return texto.trim();
 }
 
 
@@ -32,10 +60,11 @@ async function extraerTextoDesdePDF(rutaPDF) {
     }
 
     const buffer = fs.readFileSync(rutaPDF);
-
     const resultado = await pdfParse(buffer);
 
-    return resultado.text || "";
+    const textoLimpio = limpiarTexto(resultado.text || "");
+
+    return textoLimpio;
 
   } catch (error) {
     console.error("❌ Error procesando PDF:", error);
@@ -45,9 +74,9 @@ async function extraerTextoDesdePDF(rutaPDF) {
 
 
 // ======================================================
-// ✂️ FRAGMENTAR TEXTO
+// ✂️ FRAGMENTAR TEXTO (mejorado)
 // ======================================================
-function fragmentarTexto(texto, maxLength = 700) {
+function fragmentarTexto(texto, maxLength = 1400) {
   const fragmentos = [];
 
   for (let i = 0; i < texto.length; i += maxLength) {

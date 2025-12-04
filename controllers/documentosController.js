@@ -1,37 +1,16 @@
 const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
-const { extraerTextoDesdePDF } = require("../utils/pdfProcessor");
+
+// ⬅️ IMPORTAR AHORA TAMBIÉN fragmentarTexto desde pdfProcessor
+const { extraerTextoDesdePDF, fragmentarTexto } = require("../utils/pdfProcessor");
+
 const OpenAI = require("openai");
 
 // 🔹 Inicializar OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-
-// =========================================================
-// ✂️ Fragmentar texto (por palabras, max 700 chars)
-// =========================================================
-function fragmentarTexto(texto, maxLength = 700) {
-  const palabras = texto.split(" ");
-  const fragmentos = [];
-  let actual = "";
-
-  for (const palabra of palabras) {
-    if ((actual + palabra).length > maxLength) {
-      fragmentos.push(actual.trim());
-      actual = palabra + " ";
-    } else {
-      actual += palabra + " ";
-    }
-  }
-
-  if (actual.trim().length > 0) {
-    fragmentos.push(actual.trim());
-  }
-
-  return fragmentos;
-}
 
 // =========================================================
 // 📌 SUBIR DOCUMENTO PDF + GENERAR EMBEDDINGS
@@ -50,7 +29,7 @@ exports.subirDocumento = async (req, res) => {
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO DEL PDF
+    // 1️⃣ EXTRAER TEXTO LIMPIO DEL PDF
     const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
@@ -87,10 +66,10 @@ exports.subirDocumento = async (req, res) => {
         archivo.size,
         bufferOriginal,
         textoExtraído,
-        null,             // páginas (no calculamos aún)
-        true,             // procesado
-        null,             // resumen
-        {},               // metadata JSON vacío
+        null, 
+        true,
+        null,
+        {},
         archivo.originalname,
         archivo.filename,
       ]
@@ -98,22 +77,20 @@ exports.subirDocumento = async (req, res) => {
 
     const documentoId = resultadoDoc.rows[0].id;
 
-    // 3️⃣ FRAGMENTAR TEXTO
-    const fragmentos = fragmentarTexto(textoExtraído, 700);
+    // 3️⃣ FRAGMENTAR TEXTO (USANDO LA NUEVA FUNCIÓN MEJORADA)
+    const fragmentos = fragmentarTexto(textoExtraído, 1400);
 
     // 4️⃣ GENERAR EMBEDDINGS + GUARDAR FRAGMENTOS
     for (let i = 0; i < fragmentos.length; i++) {
       const textoFragmento = fragmentos[i];
 
-      // 🧠 Generar embedding con OpenAI
       const embeddingResponse = await openai.embeddings.create({
         model: "text-embedding-3-small",
         input: textoFragmento,
       });
 
-      const embedding = embeddingResponse.data[0].embedding; // Array de números
+      const embedding = embeddingResponse.data[0].embedding;
 
-      // 🗄 Guardar fragmento + embedding
       await pool.query(
         `INSERT INTO documentos_fragmentos 
           (documento_id, fragmento_index, texto, embedding)
@@ -127,7 +104,7 @@ exports.subirDocumento = async (req, res) => {
 
     res.json({
       ok: true,
-      mensaje: "Documento subido, fragmentado y embebido correctamente ✔",
+      mensaje: "Documento subido, limpiado, fragmentado y embebido correctamente ✔",
       documentoId,
       total_fragmentos: fragmentos.length,
     });
