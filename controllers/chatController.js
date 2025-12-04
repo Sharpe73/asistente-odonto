@@ -99,6 +99,7 @@ exports.crearSesion = async (req, res) => {
 
 // ====================================================================
 // 🔥 EXPANDIR SOLO SI LA PREGUNTA CORTA NO CONTIENE UNA PALABRA CLAVE
+//     *** CORREGIDA CON EL FIX DEFINITIVO ***
 // ====================================================================
 async function expandirPreguntaCorta(session_id, pregunta) {
   const corta = pregunta.trim().toLowerCase();
@@ -116,10 +117,10 @@ async function expandirPreguntaCorta(session_id, pregunta) {
   ];
 
   if (palabrasClaras.some(p => corta.includes(p))) {
-    return pregunta; // NO expandir, se trata como pregunta independiente
+    return pregunta; // NO expandir, es una pregunta real
   }
 
-  // Patrones de preguntas que SÍ se expanden
+  // Patrones que SÍ se expanden
   const patrones = [
     /^y\s*$/i,
     /^y eso/i,
@@ -135,13 +136,14 @@ async function expandirPreguntaCorta(session_id, pregunta) {
     return pregunta;
   }
 
-  // Obtener última pregunta REAL
+  // Obtener última pregunta REAL distinta a la actual
   const q = await pool.query(
     `SELECT mensaje FROM chat_historial
      WHERE session_id = $1 AND role = 'user'
+       AND mensaje <> $2
      ORDER BY creado_en DESC
-     LIMIT 1 OFFSET 1`,
-    [session_id]
+     LIMIT 1`,
+    [session_id, pregunta]
   );
 
   if (q.rows.length === 0) return pregunta;
@@ -164,9 +166,7 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // =====================================================
-    // EXPANDIR SOLO SI CORRESPONDE
-    // =====================================================
+    // EXPANDIR SI CORRESPONDE
     const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
 
     // Guardar pregunta original
@@ -176,9 +176,7 @@ exports.preguntar = async (req, res) => {
       [session_id, pregunta]
     );
 
-    // =====================================================
-    // MEMORIA DE CHAT
-    // =====================================================
+    // MEMORIA
     const memRes = await pool.query(
       `SELECT role, mensaje
        FROM chat_historial
@@ -195,9 +193,7 @@ exports.preguntar = async (req, res) => {
       content: m.mensaje
     }));
 
-    // =====================================================
-    // EMBEDDINGS
-    // =====================================================
+    // EMBEDDING
     const emb = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: preguntaExpandida,
@@ -205,9 +201,7 @@ exports.preguntar = async (req, res) => {
 
     const preguntaEmbedding = emb.data[0].embedding;
 
-    // =====================================================
-    // OBTENER FRAGMENTOS
-    // =====================================================
+    // FRAGMENTOS
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
       FROM documentos_fragmentos
@@ -232,9 +226,7 @@ exports.preguntar = async (req, res) => {
       };
     });
 
-    // =====================================================
-    // RANKING DE FRAGMENTOS
-    // =====================================================
+    // RANKING
     let top = [];
 
     if (fragmentos.length === 1) {
@@ -253,9 +245,7 @@ exports.preguntar = async (req, res) => {
 
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
-    // =====================================================
-    // PROMPT ESTRICTO
-    // =====================================================
+    // PROMPT
     const mensajes = [
       {
         role: "system",
@@ -283,9 +273,7 @@ REGLAS:
       }
     ];
 
-    // =====================================================
-    // OPENAI RESPONSE
-    // =====================================================
+    // OPENAI REQUEST
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: mensajes
@@ -300,7 +288,7 @@ REGLAS:
       [session_id, respuesta]
     );
 
-    // RESPONDER AL FRONTEND
+    // RESPUESTA FINAL
     res.json({
       ok: true,
       respuesta,
