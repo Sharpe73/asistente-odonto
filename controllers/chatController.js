@@ -97,6 +97,47 @@ exports.crearSesion = async (req, res) => {
   }
 };
 
+// ====================================================================
+// 🔥 FUNCIÓN NUEVA: EXPANDIR PREGUNTAS CORTAS COMO “¿y la dentina?”
+// ====================================================================
+async function expandirPreguntaCorta(session_id, pregunta) {
+  const corta = pregunta.trim().toLowerCase();
+
+  const patrones = [
+    /^y\s/i,
+    /^y la/i,
+    /^y el/i,
+    /^y eso/i,
+    /^y que/i,
+    /^y cual/i,
+    /^y cuales/i,
+    /^y entonces/i
+  ];
+
+  // Si NO es una pregunta corta → devolver tal cual
+  if (!patrones.some(p => p.test(corta))) {
+    return pregunta;
+  }
+
+  // Obtener última pregunta REAL del usuario
+  const q = await pool.query(
+    `SELECT mensaje FROM chat_historial
+     WHERE session_id = $1 AND role = 'user'
+     ORDER BY creado_en DESC
+     LIMIT 1 OFFSET 1`,
+    [session_id]
+  );
+
+  if (q.rows.length === 0) {
+    return pregunta; // no hay historial suficiente
+  }
+
+  const ultimaPregunta = q.rows[0].mensaje;
+
+  // Construimos la pregunta completa
+  return `${ultimaPregunta}. Además, respecto a tu última pregunta: ${pregunta}`;
+}
+
 // =========================================================
 // 🤖 Procesar pregunta (RAG + MEMORIA + RESPUESTAS EN ESPAÑOL)
 // =========================================================
@@ -111,51 +152,11 @@ exports.preguntar = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
     // =====================================================
-    // 🆕 NORMALIZAR TEXTO
+    // 🆕 EXPANDIR PREGUNTAS CORTAS
     // =====================================================
-    let normalizada = pregunta
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^\w\s]/g, "")
-      .trim();
+    const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
 
-    // =====================================================
-    // 🆕 SALUDOS
-    // =====================================================
-    const saludos = [
-      "hola", "holaa", "holaaa", "holi", "oli", "ola",
-      "hello", "hi", "hey",
-      "alo", "aloo",
-      "buenas", "wenas",
-      "buen dia", "buenos dias",
-      "buenas tardes",
-      "buenas noches",
-      "hola como estas", "hola como esta",
-      "hola que tal", "hola que haces",
-      "como estas", "como va", "que tal"
-    ];
-
-    const esSaludo = saludos.some(s => normalizada.startsWith(s));
-
-    if (esSaludo) {
-      const saludo = "¡Hola! Soy Odonto-Bot. ¿En qué puedo ayudarte hoy?";
-
-      await pool.query(
-        `INSERT INTO chat_historial (session_id, role, mensaje)
-         VALUES ($1, 'assistant', $2)`,
-        [session_id, saludo]
-      );
-
-      return res.json({
-        ok: true,
-        respuesta: saludo,
-        fragmentos_usados: 0
-      });
-    }
-
-    // =====================================================
-    // 1️⃣ Guardar pregunta del usuario
-    // =====================================================
+    // Guardar pregunta original (no expandida)
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
@@ -182,11 +183,11 @@ exports.preguntar = async (req, res) => {
     }));
 
     // =====================================================
-    // 3️⃣ Embedding de la pregunta
+    // 3️⃣ Embedding de la pregunta (expandida)
     // =====================================================
     const emb = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: pregunta,
+      input: preguntaExpandida,
     });
 
     const preguntaEmbedding = emb.data[0].embedding;
@@ -215,13 +216,12 @@ exports.preguntar = async (req, res) => {
     });
 
     // =====================================================
-    // 5️⃣ RAG FIX: si el documento tiene solo un fragmento → usar todo
+    // 5️⃣ RAG FIX
     // =====================================================
     let top = [];
 
-    if (fragmentos.length === 1) {
-      top = fragmentos;
-    } else {
+    if (fragmentos.length === 1) top = fragmentos;
+    else {
       const puntuados = fragmentos
         .map(f => ({
           ...f,
@@ -245,20 +245,19 @@ exports.preguntar = async (req, res) => {
 Eres Odonto-Bot, un asistente extremadamente estricto.
 
 REGLAS:
-
 1. RESPONDES SIEMPRE en español.
-2. NO inventas, no asumes, no completas datos.
+2. NO inventas, no asumes nada.
 3. NO usas conocimientos externos.
-4. SI ALGO NO APARECE EN EL DOCUMENTO, respondes EXACTAMENTE:
+4. SI ALGO NO ESTÁ EN EL DOCUMENTO, dices:
    "No tengo información suficiente en el documento para responder eso."
-5. Puedes traducir del inglés sin agregar nada adicional.
+5. Puedes traducir fielmente contenido del documento.
 6. Usa EXCLUSIVAMENTE los fragmentos entregados.
 `
       },
 
       ...memoriaChat,
 
-      { role: "user", content: pregunta },
+      { role: "user", content: preguntaExpandida },
 
       {
         role: "assistant",
@@ -267,11 +266,11 @@ REGLAS:
     ];
 
     // =====================================================
-    // 7️⃣ Llamado a OpenAI (FIX: mensajes, no messages)
+    // 7️⃣ Llamado a OpenAI
     // =====================================================
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: mensajes       // ← FIX aplicado
+      messages: mensajes
     });
 
     const respuesta = completion.choices[0].message.content;
@@ -291,7 +290,8 @@ REGLAS:
     res.json({
       ok: true,
       respuesta,
-      fragmentos_usados: top.length
+      fragmentos_usados: top.length,
+      pregunta_expandida: preguntaExpandida
     });
 
   } catch (error) {
