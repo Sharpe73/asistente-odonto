@@ -24,6 +24,25 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // =========================================================
+// 📝 Función auxiliar para respuestas sin datos
+// =========================================================
+async function responderSinDatos(session_id, res) {
+  const texto = "No tengo información suficiente en el documento para responder eso.";
+
+  await pool.query(
+    `INSERT INTO chat_historial (session_id, role, mensaje)
+     VALUES ($1, 'assistant', $2)`,
+    [session_id, texto]
+  );
+
+  return res.json({
+    ok: true,
+    respuesta: texto,
+    fragmentos_usados: 0
+  });
+}
+
+// =========================================================
 // 📝 Registrar mensaje
 // =========================================================
 exports.registrarMensaje = async (req, res) => {
@@ -109,7 +128,7 @@ exports.preguntar = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
     // =====================================================
-    // 🆕 NORMALIZAR TEXTO
+    // 🧹 Limpiar texto
     // =====================================================
     let normalizada = pregunta
       .toLowerCase()
@@ -118,19 +137,16 @@ exports.preguntar = async (req, res) => {
       .trim();
 
     // =====================================================
-    // 🆕 LISTA DE SALUDOS AMPLIADA
+    // 👋 Detectar saludos
     // =====================================================
     const saludos = [
-      "hola", "holaa", "holaaa", "holi", "oli", "ola",
-      "hello", "hi", "hey",
-      "alo", "alo", "aloo",
-      "buenas", "wenas",
-      "buen dia", "buenos dias",
-      "buenas tarde", "buenas tardes",
-      "buenas noche", "buenas noches",
-      "hola como estas", "hola como esta",
-      "hola que tal", "hola que haces",
-      "como estas", "como va", "que tal"
+      "hola","holaa","holaaa","holi","oli","ola",
+      "hello","hi","hey",
+      "alo","aloo",
+      "buenas","wenas",
+      "buen dia","buenos dias",
+      "buenas tardes","buenas noches",
+      "hola como estas","hola que tal","como estas","como va"
     ];
 
     const esSaludo = saludos.some(s => normalizada.startsWith(s));
@@ -144,15 +160,11 @@ exports.preguntar = async (req, res) => {
         [session_id, saludo]
       );
 
-      return res.json({
-        ok: true,
-        respuesta: saludo,
-        fragmentos_usados: 0
-      });
+      return res.json({ ok: true, respuesta: saludo, fragmentos_usados: 0 });
     }
 
     // =====================================================
-    // 1️⃣ Guardar pregunta del usuario
+    // Guardar pregunta
     // =====================================================
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -161,7 +173,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 2️⃣ Recuperar memoria (últimos 10 mensajes)
+    // Recuperar memoria
     // =====================================================
     const memRes = await pool.query(
       `SELECT role, mensaje
@@ -172,15 +184,13 @@ exports.preguntar = async (req, res) => {
       [session_id]
     );
 
-    const historial = memRes.rows.reverse();
-
-    const memoriaChat = historial.map(m => ({
+    const memoriaChat = memRes.rows.reverse().map(m => ({
       role: m.role,
       content: m.mensaje
     }));
 
     // =====================================================
-    // 3️⃣ Embedding de la pregunta
+    // Embedding de la pregunta
     // =====================================================
     const emb = await openai.embeddings.create({
       model: "text-embedding-3-small",
@@ -190,7 +200,7 @@ exports.preguntar = async (req, res) => {
     const preguntaEmbedding = emb.data[0].embedding;
 
     // =====================================================
-    // 4️⃣ Obtener fragmentos del documento
+    // Obtener fragmentos
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -199,7 +209,6 @@ exports.preguntar = async (req, res) => {
 
     const fragmentos = fragRes.rows.map(f => {
       let emb = f.embedding;
-
       if (typeof emb === "string") {
         try {
           emb = emb.replace(/{/g, "[").replace(/}/g, "]");
@@ -208,17 +217,16 @@ exports.preguntar = async (req, res) => {
           emb = null;
         }
       }
-
       return { index: f.fragmento_index, texto: f.texto, embedding: emb };
     });
 
     // =====================================================
-    // 5️⃣ RAG FIX: SI EL PDF TIENE SOLO 1 FRAGMENTO → USAR TODO EL DOCUMENTO
+    // RAG FIX: PDF con 1 fragmento → usar completo
     // =====================================================
     let top = [];
 
     if (fragmentos.length === 1) {
-      top = fragmentos;  // usar el documento completo
+      top = fragmentos;
     } else {
       // Ranking normal
       const puntuados = fragmentos
@@ -226,16 +234,22 @@ exports.preguntar = async (req, res) => {
           ...f,
           score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
         }))
-        .filter(f => f.embedding && f.score > 0)
         .sort((a, b) => b.score - a.score);
 
-      top = puntuados.slice(0, 5);
+      // Aplicar UMBRAL de relevancia
+      const filtrados = puntuados.filter(f => f.score >= 0.25);
+
+      if (filtrados.length === 0) {
+        return responderSinDatos(session_id, res);
+      }
+
+      top = filtrados.slice(0, 3);
     }
 
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
     // =====================================================
-    // 6️⃣ PROMPT ULTRA ESTRICTO
+    // Prompt estricto
     // =====================================================
     const mensajes = [
       {
@@ -243,40 +257,32 @@ exports.preguntar = async (req, res) => {
         content: `
 Eres Odonto-Bot, un asistente extremadamente estricto.
 
-REGLAS OBLIGATORIAS:
-
-1. RESPONDES SIEMPRE en español.
-2. NO agregas, inventas ni asumes información que no esté literalmente en el documento.
-3. NO usas conocimientos externos.
-4. Si la información NO aparece en los fragmentos, responde EXACTAMENTE:
+REGLAS:
+1. Solo respondes usando información del documento.
+2. Si NO está literalmente en los fragmentos, responde:
    "No tengo información suficiente en el documento para responder eso."
-5. Puedes traducir texto del documento.
-6. Usa exclusivamente el contexto entregado.
+3. No inventas, no asumes, no completas ideas.
+4. Prohibido usar conocimientos externos.
+5. Respondes siempre en español.
 `
       },
-
       ...memoriaChat,
-
-      { role: "user", content: pregunta },
-
-      {
-        role: "assistant",
-        content: `Fragmentos relevantes del documento:\n${contexto}`
-      }
+      { role: "assistant", content: `Fragmentos relevantes:\n${contexto}` },
+      { role: "user", content: pregunta }
     ];
 
     // =====================================================
-    // 7️⃣ Llamado a OpenAI
+    // OpenAI
     // =====================================================
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: mensajes
+      messages
     });
 
     const respuesta = completion.choices[0].message.content;
 
     // =====================================================
-    // 8️⃣ Guardar respuesta
+    // Guardar respuesta
     // =====================================================
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -285,7 +291,7 @@ REGLAS OBLIGATORIAS:
     );
 
     // =====================================================
-    // 9️⃣ Enviar respuesta
+    // Responder
     // =====================================================
     res.json({
       ok: true,
