@@ -71,7 +71,7 @@ exports.obtenerHistorial = async (req, res) => {
 };
 
 // =========================================================
-// 🆕 Crear sesión GLOBAL (sin documento_id)
+// 🆕 Crear sesión GLOBAL
 // =========================================================
 exports.crearSesion = async (req, res) => {
   try {
@@ -96,7 +96,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 Procesar pregunta (RAG GLOBAL + MEMORIA REAL DE CHAT)
+// 🤖 Procesar pregunta (RAG + MEMORIA)
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -108,19 +108,38 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    const normalizada = pregunta.toLowerCase().trim();
+    // =====================================================
+    // 🆕 NORMALIZAR TEXTO
+    // =====================================================
+    let normalizada = pregunta
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar tildes
+      .replace(/[^\w\s]/g, "") // quitar signos
+      .trim();
 
     // =====================================================
-    // 🆕 RESPUESTAS PARA TODOS LOS SALUDOS POSIBLES
+    // 🆕 LISTA DE SALUDOS AMPLIADA
     // =====================================================
-    const saludosRegex =
-      /^(hola|hello|hi|holi|ola|alo|aló|wenas|buenas|buen día|buenos días|buenas tardes|buenas noches|qué tal|que tal|como estas|cómo estás|como va|cómo va|hola que tal|hola como estas|hola cómo estás)$/i;
+    const saludos = [
+      "hola", "holaa", "holaaa", "holi", "oli", "ola",
+      "hello", "hi", "hey",
+      "alo", "alo", "aloo",
 
-    if (saludosRegex.test(normalizada)) {
-      const saludo =
-        "¡Hola! Soy Odonto-Bot, tu asistente virtual. ¿En qué puedo ayudarte hoy?";
+      "buenas", "wenas",
+      "buen dia", "buenos dias", "buenos dia", "buen dia",
+      "buenas tarde", "buenas tardes",
+      "buenas noche", "buenas noches",
 
-      // Guardar en historial
+      "hola como estas", "hola como esta",
+      "hola que tal", "hola que haces",
+      "como estas", "como va", "que tal"
+    ];
+
+    const esSaludo = saludos.some(s => normalizada.startsWith(s));
+
+    if (esSaludo) {
+      const saludo = "¡Hola! Soy Odonto-Bot, tu asistente virtual. ¿En qué puedo ayudarte hoy?";
+
       await pool.query(
         `INSERT INTO chat_historial (session_id, role, mensaje)
          VALUES ($1, 'assistant', $2)`,
@@ -144,7 +163,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 2️⃣ Recuperar memoria real (últimos 10 mensajes)
+    // 2️⃣ Recuperar memoria real
     // =====================================================
     const memRes = await pool.query(
       `SELECT role, mensaje
@@ -173,7 +192,7 @@ exports.preguntar = async (req, res) => {
     const preguntaEmbedding = pregEmb.data[0].embedding;
 
     // =====================================================
-    // 4️⃣ Traer todos los fragmentos de todos los documentos
+    // 4️⃣ Traer documentos
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -188,16 +207,11 @@ exports.preguntar = async (req, res) => {
           emb = emb.replace(/{/g, "[").replace(/}/g, "]");
           emb = JSON.parse(emb);
         } catch (e) {
-          console.error("❌ Error convirtiendo embedding:", f.embedding);
           emb = null;
         }
       }
 
-      return {
-        index: f.fragmento_index,
-        texto: f.texto,
-        embedding: emb
-      };
+      return { index: f.fragmento_index, texto: f.texto, embedding: emb };
     });
 
     // =====================================================
@@ -215,7 +229,7 @@ exports.preguntar = async (req, res) => {
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
     // =====================================================
-    // 6️⃣ Construir mensajes para OpenAI (MEMORIA + CONTEXTO)
+    // 6️⃣ Prompt final
     // =====================================================
     const mensajes = [
       {
@@ -223,14 +237,8 @@ exports.preguntar = async (req, res) => {
         content:
           "Eres Odonto-Bot, un asistente especializado. Usa SOLO el contexto entregado. Si falta información, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'"
       },
-
       ...memoriaChat,
-
-      {
-        role: "user",
-        content: pregunta
-      },
-
+      { role: "user", content: pregunta },
       {
         role: "assistant",
         content: `Aquí tienes el contexto relevante proveniente de los documentos:\n${contexto}`
@@ -248,7 +256,7 @@ exports.preguntar = async (req, res) => {
     const respuesta = completion.choices[0].message.content;
 
     // =====================================================
-    // 8️⃣ Guardar respuesta del asistente
+    // 8️⃣ Guardar respuesta
     // =====================================================
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -257,7 +265,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // 9️⃣ Enviar respuesta al frontend
+    // 9️⃣ Respuesta final
     // =====================================================
     res.json({
       ok: true,
