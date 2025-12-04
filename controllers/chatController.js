@@ -42,7 +42,7 @@ exports.registrarMensaje = async (req, res) => {
 
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
-      VALUES ($1, $2, $3)`,
+       VALUES ($1, $2, $3)`,
       [session_id, role, mensaje]
     );
 
@@ -63,8 +63,8 @@ exports.obtenerHistorial = async (req, res) => {
 
     const result = await pool.query(
       `SELECT * FROM chat_historial
-      WHERE session_id = $1
-      ORDER BY creado_en ASC`,
+       WHERE session_id = $1
+       ORDER BY creado_en ASC`,
       [session_id]
     );
 
@@ -77,7 +77,7 @@ exports.obtenerHistorial = async (req, res) => {
 };
 
 // =========================================================
-// 🆕 Crear sesión (ACEPTA documento_id POR BODY O QUERY)
+// 🆕 Crear sesión
 // =========================================================
 exports.crearSesion = async (req, res) => {
   try {
@@ -114,7 +114,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 Procesar pregunta con RAG + memoria
+// 🤖 Procesar pregunta (RAG + memoria)
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -137,10 +137,10 @@ exports.preguntar = async (req, res) => {
 
     const documento_id = sesRes.rows[0].documento_id;
 
-    // 2️⃣ Guardar pregunta en historial
+    // 2️⃣ Guardar pregunta
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
-      VALUES ($1, 'user', $2)`,
+       VALUES ($1, 'user', $2)`,
       [session_id, pregunta]
     );
 
@@ -155,18 +155,19 @@ exports.preguntar = async (req, res) => {
     // 4️⃣ Obtener fragmentos del documento
     const fragRes = await pool.query(
       `SELECT fragmento_index, texto, embedding
-      FROM documentos_fragmentos
-      WHERE documento_id = $1`,
+       FROM documentos_fragmentos
+       WHERE documento_id = $1`,
       [documento_id]
     );
 
+    // ⚠️ FIX: NO USAMOS JSON.parse → PostgreSQL jsonb YA ES OBJETO
     const fragmentos = fragRes.rows.map(f => ({
       index: f.fragmento_index,
       texto: f.texto,
-      embedding: f.embedding ? JSON.parse(f.embedding) : null,
+      embedding: f.embedding || null,
     }));
 
-    // 5️⃣ Calcular similitud coseno y filtrar NULL
+    // 5️⃣ Similitud coseno
     const puntuados = fragmentos
       .map(f => ({
         ...f,
@@ -177,17 +178,16 @@ exports.preguntar = async (req, res) => {
 
     let top = puntuados.slice(0, 5);
     let contexto = top.map(f => f.texto).join("\n\n");
-
     if (top.length === 0) contexto = "";
 
-    // 6️⃣ Generar respuesta con OpenAI
+    // 6️⃣ Generar respuesta
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
           content:
-            "Eres Odonto-Bot. Responde SOLO usando información del contexto. Si no está en el documento, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'",
+            "Eres Odonto-Bot. Responde SOLO con información del contexto. Si no está en el documento, responde exactamente: 'No tengo información suficiente en el documento para responder eso.'",
         },
         {
           role: "user",
@@ -201,7 +201,7 @@ exports.preguntar = async (req, res) => {
     // 7️⃣ Guardar respuesta
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
-      VALUES ($1, 'assistant', $2)`,
+       VALUES ($1, 'assistant', $2)`,
       [session_id, respuesta]
     );
 
