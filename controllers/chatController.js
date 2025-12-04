@@ -98,15 +98,30 @@ exports.crearSesion = async (req, res) => {
 };
 
 // ====================================================================
-// 🔥 FUNCIÓN NUEVA: EXPANDIR “¿y la dentina?”, “¿y eso?”, etc.
+// 🔥 EXPANDIR SOLO SI LA PREGUNTA CORTA NO CONTIENE UNA PALABRA CLAVE
 // ====================================================================
 async function expandirPreguntaCorta(session_id, pregunta) {
   const corta = pregunta.trim().toLowerCase();
 
+  // Palabras clave → NO expandir nunca
+  const palabrasClaras = [
+    "dentina",
+    "pulpa",
+    "esmalte",
+    "ligamento",
+    "periodontal",
+    "pulp",
+    "dentin",
+    "enamel"
+  ];
+
+  if (palabrasClaras.some(p => corta.includes(p))) {
+    return pregunta; // NO expandir, se trata como pregunta independiente
+  }
+
+  // Patrones de preguntas que SÍ se expanden
   const patrones = [
-    /^y\s/i,
-    /^y la/i,
-    /^y el/i,
+    /^y\s*$/i,
     /^y eso/i,
     /^y que/i,
     /^y qué/i,
@@ -120,7 +135,7 @@ async function expandirPreguntaCorta(session_id, pregunta) {
     return pregunta;
   }
 
-  // Obtener última pregunta REAL (no la actual)
+  // Obtener última pregunta REAL
   const q = await pool.query(
     `SELECT mensaje FROM chat_historial
      WHERE session_id = $1 AND role = 'user'
@@ -137,7 +152,7 @@ async function expandirPreguntaCorta(session_id, pregunta) {
 }
 
 // =========================================================
-// 🤖 Procesar pregunta (RAG + MEMORIA + NATURAL + ESTRICTO)
+// 🤖 Procesar pregunta
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -150,11 +165,11 @@ exports.preguntar = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
     // =====================================================
-    // 🔥 EXPANDIR PREGUNTA CORTA (mejora de conversación)
+    // EXPANDIR SOLO SI CORRESPONDE
     // =====================================================
     const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
 
-    // Guardar la pregunta original
+    // Guardar pregunta original
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
@@ -162,7 +177,7 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // Recuperar memoria
+    // MEMORIA DE CHAT
     // =====================================================
     const memRes = await pool.query(
       `SELECT role, mensaje
@@ -181,7 +196,7 @@ exports.preguntar = async (req, res) => {
     }));
 
     // =====================================================
-    // 3️⃣ Embedding de la pregunta expandida
+    // EMBEDDINGS
     // =====================================================
     const emb = await openai.embeddings.create({
       model: "text-embedding-3-small",
@@ -191,7 +206,7 @@ exports.preguntar = async (req, res) => {
     const preguntaEmbedding = emb.data[0].embedding;
 
     // =====================================================
-    // Fragmentos del documento
+    // OBTENER FRAGMENTOS
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -210,16 +225,21 @@ exports.preguntar = async (req, res) => {
         }
       }
 
-      return { index: f.fragmento_index, texto: f.texto, embedding: emb };
+      return {
+        index: f.fragmento_index,
+        texto: f.texto,
+        embedding: emb
+      };
     });
 
     // =====================================================
-    // RAG FIX: Documento corto usa todo
+    // RANKING DE FRAGMENTOS
     // =====================================================
     let top = [];
 
-    if (fragmentos.length === 1) top = fragmentos;
-    else {
+    if (fragmentos.length === 1) {
+      top = fragmentos;
+    } else {
       const puntuados = fragmentos
         .map(f => ({
           ...f,
@@ -234,7 +254,7 @@ exports.preguntar = async (req, res) => {
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
     // =====================================================
-    // PROMPT ULTRA ESTRICTO (sin alucinar nada)
+    // PROMPT ESTRICTO
     // =====================================================
     const mensajes = [
       {
@@ -244,12 +264,12 @@ Eres Odonto-Bot, un asistente extremadamente estricto.
 
 REGLAS:
 1. Respondes SIEMPRE en español.
-2. NO inventas absolutamente nada.
+2. NO inventas nada.
 3. NO usas conocimientos externos.
-4. Si algo NO está en el documento dices EXACTAMENTE:
+4. Si algo NO está en el documento dices:
    "No tengo información suficiente en el documento para responder eso."
-5. Puedes traducir texto, pero no agregar contenido.
-6. Usa EXCLUSIVAMENTE lo que aparece en los fragmentos.
+5. Puedes traducir, pero no agregar contenido.
+6. Usa exclusivamente los fragmentos entregados.
 `
       },
 
@@ -264,7 +284,7 @@ REGLAS:
     ];
 
     // =====================================================
-    // Llamado a OpenAI
+    // OPENAI RESPONSE
     // =====================================================
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -273,14 +293,14 @@ REGLAS:
 
     const respuesta = completion.choices[0].message.content;
 
-    // Guardar respuesta
+    // GUARDAR RESPUESTA
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'assistant', $2)`,
       [session_id, respuesta]
     );
 
-    // Responder al frontend
+    // RESPONDER AL FRONTEND
     res.json({
       ok: true,
       respuesta,
