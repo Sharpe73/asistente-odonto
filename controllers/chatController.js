@@ -190,7 +190,7 @@ exports.preguntar = async (req, res) => {
     const preguntaEmbedding = emb.data[0].embedding;
 
     // =====================================================
-    // 4️⃣ Obtener fragmentos
+    // 4️⃣ Obtener fragmentos del documento
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -213,21 +213,29 @@ exports.preguntar = async (req, res) => {
     });
 
     // =====================================================
-    // 5️⃣ Similaridad coseno
+    // 5️⃣ RAG FIX: SI EL PDF TIENE SOLO 1 FRAGMENTO → USAR TODO EL DOCUMENTO
     // =====================================================
-    const puntuados = fragmentos
-      .map(f => ({
-        ...f,
-        score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
-      }))
-      .filter(f => f.embedding && f.score > 0)
-      .sort((a, b) => b.score - a.score);
+    let top = [];
 
-    const top = puntuados.slice(0, 5);
+    if (fragmentos.length === 1) {
+      top = fragmentos;  // usar el documento completo
+    } else {
+      // Ranking normal
+      const puntuados = fragmentos
+        .map(f => ({
+          ...f,
+          score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
+        }))
+        .filter(f => f.embedding && f.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      top = puntuados.slice(0, 5);
+    }
+
     const contexto = top.map(f => f.texto).join("\n\n") || "";
 
     // =====================================================
-    // 6️⃣ PROMPT ULTRA ESTRICTO (ESPAÑOL + SIN ALUCINAR)
+    // 6️⃣ PROMPT ULTRA ESTRICTO
     // =====================================================
     const mensajes = [
       {
@@ -237,17 +245,13 @@ Eres Odonto-Bot, un asistente extremadamente estricto.
 
 REGLAS OBLIGATORIAS:
 
-1. RESPONDES SIEMPRE en español, aunque los documentos estén en inglés.
-2. NO agregas, inventas ni asumes información que no esté literalmente en los documentos.
+1. RESPONDES SIEMPRE en español.
+2. NO agregas, inventas ni asumes información que no esté literalmente en el documento.
 3. NO usas conocimientos externos.
 4. Si la información NO aparece en los fragmentos, responde EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
-5. Puedes traducir información del inglés al español, pero SIN agregar nada.
-6. Usa EXCLUSIVAMENTE el contexto entregado.
-7. Si el contexto está vacío o es irrelevante, devuelve la frase obligatoria.
-8. No completes ideas, no infieras significados, no supongas nada.
-9. Está prohibido mencionar información que no esté literalmente en el PDF.
-10. No puedes citar páginas, autores o referencias si no aparecen en los fragmentos.
+5. Puedes traducir texto del documento.
+6. Usa exclusivamente el contexto entregado.
 `
       },
 
