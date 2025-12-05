@@ -7,19 +7,22 @@ const openai = new OpenAI({
 });
 
 // =========================================================
-// 🧮 Similitud coseno segura
+// 🧮 Similitud coseno correcta (VERSIÓN QUE SI FUNCIONA)
 // =========================================================
 function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB) return -1;
   if (!Array.isArray(vecA) || !Array.isArray(vecB)) return -1;
 
   let dot = 0, normA = 0, normB = 0;
+
   for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecA[i];
+    dot += vecA[i] * vecB[i];     // ← CORRECTO (antes estaba MAL)
     normA += vecA[i] * vecA[i];
     normB += vecB[i] * vecB[i];
   }
+
   if (normA === 0 || normB === 0) return -1;
+
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
@@ -74,7 +77,6 @@ async function expandirPreguntaCorta(session_id, pregunta) {
   // =====================================================
   // DETECCIÓN DE CAMBIO DE TEMA
   // =====================================================
-  // Si similitud < 0.75 → tema totalmente nuevo → limpiar contexto
   if (similitud < 0.75) {
     return `
 La nueva pregunta del usuario no está relacionada con el tema anterior.
@@ -168,7 +170,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 PROCESAR PREGUNTA
+// 🤖 PROCESAR PREGUNTA (RAG con TODOS los PDFs)
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -218,7 +220,7 @@ exports.preguntar = async (req, res) => {
     const preguntaEmbedding = embPregunta.data[0].embedding;
 
     // =====================================================
-    // Fragmentos
+    // Obtener TODOS los fragmentos de TODOS los PDFs
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
@@ -234,7 +236,7 @@ exports.preguntar = async (req, res) => {
     }));
 
     // =====================================================
-    // Ranking RAG
+    // Ranking RAG (TOP 5 fragmentos más similares)
     // =====================================================
     const top = fragmentos
       .map(f => ({
@@ -248,7 +250,7 @@ exports.preguntar = async (req, res) => {
     const contexto = top.map(f => f.texto).join("\n\n");
 
     // =====================================================
-    // Prompt final
+    // Prompt final al modelo
     // =====================================================
     const mensajes = [
       {
