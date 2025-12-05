@@ -1,7 +1,7 @@
 const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
-const { extraerTextoPDF_Seguro, fragmentarTexto } = require("../utils/pdfProcessor");
+const { extraerTextoDesdePDF, fragmentarTexto } = require("../utils/pdfProcessor");
 
 const OpenAI = require("openai");
 
@@ -27,8 +27,8 @@ exports.subirDocumento = async (req, res) => {
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO LIMPIO DEL PDF — NUEVA FUNCIÓN SEGURA
-    const textoExtraído = await extraerTextoPDF_Seguro(rutaPDF);
+    // 1️⃣ EXTRAER TEXTO LIMPIO DEL PDF — FUNCIÓN CORRECTA
+    const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
