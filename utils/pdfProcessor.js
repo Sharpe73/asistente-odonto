@@ -74,31 +74,13 @@ async function extraerTextoDesdePDF(rutaPDF) {
 
 
 // ======================================================
-// ✂️ FRAGMENTAR TEXTO — VERSIÓN PROFESIONAL (SEMÁNTICA)
+// ✂️ FRAGMENTAR TEXTO (mejorado)
 // ======================================================
-function fragmentarTexto(texto, maxLength = 500) {
-  // 1. Dividir por oraciones reales
-  const oraciones = texto
-    .split(/(?<=[\.!\?])\s+/)
-    .map(o => o.trim())
-    .filter(o => o.length > 0);
-
+function fragmentarTexto(texto, maxLength = 1400) {
   const fragmentos = [];
-  let actual = "";
 
-  // 2. Construir fragmentos manteniendo coherencia semántica
-  for (const oracion of oraciones) {
-    if ((actual + " " + oracion).length > maxLength) {
-      fragmentos.push(actual.trim());
-      actual = oracion;
-    } else {
-      actual += " " + oracion;
-    }
-  }
-
-  // 3. Agregar último fragmento
-  if (actual.length > 0) {
-    fragmentos.push(actual.trim());
+  for (let i = 0; i < texto.length; i += maxLength) {
+    fragmentos.push(texto.substring(i, i + maxLength));
   }
 
   return fragmentos;
