@@ -5,8 +5,8 @@ const fs = require("fs");
 // ============================
 function limpiarTexto(raw) {
   if (!raw) return "";
-
   let texto = raw;
+
   texto = texto.replace(/-\n/g, "");
   texto = texto.replace(/\n{2,}/g, " ");
   texto = texto.replace(/\n/g, " ");
@@ -20,9 +20,9 @@ function limpiarTexto(raw) {
 }
 
 // ============================
-// 📄 EXTRAER TEXTO CON pdfjs-dist
+// 📄 EXTRAER TEXTO (VERSIÓN COMPATIBLE RAILWAY)
 // ============================
-const pdfjsLib = require("pdfjs-dist/build/pdf.js"); // ← ESTA ES LA CORRECTA PARA RAILWAY
+const pdfjsLib = require("pdfjs-dist/es5/build/pdf.js");
 
 async function extraerTextoDesdePDF(rutaPDF) {
   try {
@@ -34,14 +34,13 @@ async function extraerTextoDesdePDF(rutaPDF) {
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
-      const strings = content.items.map((x) => x.str).join(" ");
-      texto += strings + "\n";
+      texto += content.items.map(i => i.str).join(" ") + "\n";
     }
 
     return limpiarTexto(texto);
 
   } catch (error) {
-    console.error("❌ Error leyendo PDF con pdfjs-dist:", error);
+    console.error("❌ Error leyendo PDF:", error);
     throw new Error("No se pudo procesar el PDF");
   }
 }
