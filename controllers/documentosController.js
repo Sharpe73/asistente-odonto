@@ -74,7 +74,7 @@ exports.subirDocumento = async (req, res) => {
         archivo.size,
         bufferOriginal,
         textoExtraído,
-        null, // <- si luego quieres detectar páginas reales se cambia aquí
+        null,
         true,
         null,
         {},
@@ -101,6 +101,7 @@ exports.subirDocumento = async (req, res) => {
 
       const embedding = embeddingResponse.data[0].embedding;
 
+      // 🔥🔥 JSONB directo, sin stringify
       await pool.query(
         `INSERT INTO documentos_fragmentos 
           (documento_id, fragmento_index, texto, embedding)
@@ -109,7 +110,7 @@ exports.subirDocumento = async (req, res) => {
           documentoId,
           i + 1,
           textoFragmento,
-          embedding // JSONB directo
+          JSON.stringify(embedding) // ← ESTA ES LA FORMA CORRECTA
         ]
       );
     }
