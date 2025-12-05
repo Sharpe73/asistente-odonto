@@ -17,7 +17,7 @@ function normalize(vec) {
 }
 
 // ========================================================
-// 🧮 Función: similitud coseno (dot product)
+// 🧮 Similitud coseno (dot product)
 // ========================================================
 function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB) return -1;
@@ -27,12 +27,29 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // ========================================================
-// 🔥 Reformular pregunta (mejor semántica)
+// 🔥 BOOST semántico para PDFs muy cortos
+// ========================================================
+function semanticBoost(pregunta, texto) {
+  const palabrasPregunta = pregunta.toLowerCase().split(/\W+/);
+  const palabrasTexto = texto.toLowerCase().split(/\W+/);
+
+  let coincidencias = 0;
+  for (const palabra of palabrasPregunta) {
+    if (palabra.length > 3 && palabrasTexto.includes(palabra)) {
+      coincidencias += 1;
+    }
+  }
+
+  return coincidencias * 0.25; // cada coincidencia añade 0.25
+}
+
+// ========================================================
+// 🔥 Reformular pregunta
 // ========================================================
 async function reformularPregunta(preguntaOriginal) {
   const prompt = `
 Reformula la siguiente pregunta para que sea más clara y específica,
-manteniendo EXACTAMENTE el mismo significado. Responde solo con la pregunta reformulada:
+sin cambiar su intención. Responde solo la pregunta reformulada:
 
 "${preguntaOriginal}"
 `;
@@ -49,7 +66,7 @@ manteniendo EXACTAMENTE el mismo significado. Responde solo con la pregunta refo
 }
 
 // ========================================================
-// 😎 IA ULTRA ESTRICTA — SOLO PDF
+// 😎 IA ULTRA ESTRICTA — SOLO INFO DEL PDF
 // ========================================================
 async function generarRespuestaIA(pregunta, fragmentosTexto) {
   const systemPrompt = `
@@ -59,8 +76,8 @@ REGLAS:
 1. Respondes SIEMPRE en español.
 2. NO inventas nada.
 3. NO usas conocimientos externos.
-4. SOLO puedes usar información contenida en los fragmentos entregados.
-5. Si no está en los fragmentos, responde EXACTAMENTE:
+4. SOLO puedes usar la información contenida en los fragmentos.
+5. Si no aparece en los fragmentos, responde EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
 `;
 
@@ -90,10 +107,10 @@ exports.preguntar = async (req, res) => {
       });
     }
 
-    // 1️⃣ Reformular pregunta
+    // 1️⃣ Reformular
     const preguntaReformulada = await reformularPregunta(pregunta);
 
-    // 2️⃣ Embedding de la pregunta
+    // 2️⃣ Embedding pregunta
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: preguntaReformulada,
@@ -110,38 +127,40 @@ exports.preguntar = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({
         ok: false,
-        mensaje: "No existen documentos cargados en la base",
+        mensaje: "No existen documentos cargados",
       });
     }
 
-    // 4️⃣ Procesar fragmentos
+    // 4️⃣ Procesar fragmentos con boosting semántico
     const fragmentosProcesados = result.rows.map(f => {
       let emb = Array.isArray(f.embedding) ? f.embedding : null;
-
       emb = emb ? normalize(emb) : null;
+
+      const scoreBase = emb ? cosineSimilarity(preguntaEmbedding, emb) : 0;
+      const boost = semanticBoost(preguntaReformulada, f.texto);
 
       return {
         index: f.fragmento_index,
         texto: f.texto,
-        embedding: emb,
-        score: emb ? cosineSimilarity(preguntaEmbedding, emb) : -1,
+        score: scoreBase + boost, // 💥 similitud híbrida
       };
     });
 
-    // 5️⃣ Rankear TODOS los fragmentos (sin filtro)
+    // 5️⃣ Tomar top 12 fragmentos
     const top = fragmentosProcesados
       .sort((a, b) => b.score - a.score)
-      .slice(0, 12); // ← mayor recall
+      .slice(0, 12);
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
-    // 6️⃣ Generar respuesta estricta
+    // 6️⃣ Respuesta
     const respuestaIA = await generarRespuestaIA(pregunta, contexto);
 
     res.json({
       ok: true,
       pregunta_reformulada: preguntaReformulada,
       respuesta: respuestaIA,
+      scores: top.map(t => t.score),
       fragmentos_usados: top.length,
     });
 
