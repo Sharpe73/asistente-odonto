@@ -1,5 +1,4 @@
 const fs = require("fs");
-const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
 
 // ============================
 // 🧹 LIMPIAR TEXTO
@@ -23,6 +22,8 @@ function limpiarTexto(raw) {
 // ============================
 // 📄 EXTRAER TEXTO CON pdfjs-dist
 // ============================
+const pdfjsLib = require("pdfjs-dist/build/pdf.js"); // ← ESTA ES LA CORRECTA PARA RAILWAY
+
 async function extraerTextoDesdePDF(rutaPDF) {
   try {
     const data = new Uint8Array(fs.readFileSync(rutaPDF));
