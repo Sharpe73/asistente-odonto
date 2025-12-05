@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 // ⬅️ IMPORTAR AHORA TAMBIÉN fragmentarTexto desde pdfProcessor
-const { extraerTextoDesdePDF, fragmentarTexto } = require("../utils/pdfProcessor");
+const { extraerTextoPDF_Seguro, fragmentarTexto } = require("../utils/pdfProcessor");
 
 const OpenAI = require("openai");
 
@@ -29,8 +29,8 @@ exports.subirDocumento = async (req, res) => {
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO LIMPIO DEL PDF
-    const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
+    // 1️⃣ EXTRAER TEXTO LIMPIO DEL PDF — NUEVA FUNCIÓN SEGURA
+    const textoExtraído = await extraerTextoPDF_Seguro(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
@@ -77,7 +77,7 @@ exports.subirDocumento = async (req, res) => {
 
     const documentoId = resultadoDoc.rows[0].id;
 
-    // 3️⃣ FRAGMENTAR TEXTO (USANDO LA NUEVA FUNCIÓN MEJORADA)
+    // 3️⃣ FRAGMENTAR TEXTO (1400 caracteres)
     const fragmentos = fragmentarTexto(textoExtraído, 1400);
 
     // 4️⃣ GENERAR EMBEDDINGS + GUARDAR FRAGMENTOS
