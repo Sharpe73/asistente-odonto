@@ -1,8 +1,6 @@
 const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
-
-// ⬅️ IMPORTAR AHORA TAMBIÉN fragmentarTexto desde pdfProcessor
 const { extraerTextoPDF_Seguro, fragmentarTexto } = require("../utils/pdfProcessor");
 
 const OpenAI = require("openai");
