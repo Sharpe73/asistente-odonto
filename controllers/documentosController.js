@@ -2,16 +2,15 @@ const pool = require("../database");
 const fs = require("fs");
 const path = require("path");
 const { extraerTextoDesdePDF, fragmentarTexto } = require("../utils/pdfProcessor");
-
 const OpenAI = require("openai");
 
-// 🔹 Inicializar OpenAI
+// Inicializar OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 // =========================================================
-// 📌 SUBIR DOCUMENTO PDF + GENERAR EMBEDDINGS
+// 📌 SUBIR DOCUMENTO PDF + LIMPIEZA + EMBEDDINGS
 // =========================================================
 exports.subirDocumento = async (req, res) => {
   try {
@@ -27,8 +26,8 @@ exports.subirDocumento = async (req, res) => {
 
     console.log("📄 PDF recibido:", rutaPDF);
 
-    // 1️⃣ EXTRAER TEXTO LIMPIO DEL PDF — FUNCIÓN CORRECTA
-    const textoExtraído = await extraerTextoDesdePDF(rutaPDF);
+    // 1️⃣ EXTRAER TEXTO LIMPIO
+    let textoExtraído = await extraerTextoDesdePDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
       return res.status(400).json({
@@ -37,9 +36,20 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 2️⃣ GUARDAR DOCUMENTO COMPLETO
+    // 🔥 1.1 LIMPIEZA PROFESIONAL DEL TEXTO
+    textoExtraído = textoExtraído
+      .replace(/\r/g, " ")
+      .replace(/\n{2,}/g, "\n")
+      .replace(/ {2,}/g, " ")
+      .trim()
+      .normalize("NFC");
+
+    console.log("🔍 Largo del texto extraído:", textoExtraído.length, "caracteres");
+
+    // 2️⃣ LEER PDF ORIGINAL
     const bufferOriginal = fs.readFileSync(rutaPDF);
 
+    // 3️⃣ GUARDAR DOCUMENTO
     const resultadoDoc = await pool.query(
       `INSERT INTO documentos (
           nombre_original,
@@ -64,7 +74,7 @@ exports.subirDocumento = async (req, res) => {
         archivo.size,
         bufferOriginal,
         textoExtraído,
-        null, 
+        null, // <- si luego quieres detectar páginas reales se cambia aquí
         true,
         null,
         {},
@@ -75,10 +85,12 @@ exports.subirDocumento = async (req, res) => {
 
     const documentoId = resultadoDoc.rows[0].id;
 
-    // 3️⃣ FRAGMENTAR TEXTO (1400 caracteres)
-    const fragmentos = fragmentarTexto(textoExtraído, 1400);
+    // 4️⃣ FRAGMENTAR (nueva longitud óptima)
+    const fragmentos = fragmentarTexto(textoExtraído, 1800);
 
-    // 4️⃣ GENERAR EMBEDDINGS + GUARDAR FRAGMENTOS
+    console.log(`🧩 Total de fragmentos generados: ${fragmentos.length}`);
+
+    // 5️⃣ EMBEDDINGS + GUARDAR EN TABLA documentos_fragmentos
     for (let i = 0; i < fragmentos.length; i++) {
       const textoFragmento = fragmentos[i];
 
@@ -93,11 +105,16 @@ exports.subirDocumento = async (req, res) => {
         `INSERT INTO documentos_fragmentos 
           (documento_id, fragmento_index, texto, embedding)
          VALUES ($1, $2, $3, $4)`,
-        [documentoId, i + 1, textoFragmento, JSON.stringify(embedding)]
+        [
+          documentoId,
+          i + 1,
+          textoFragmento,
+          embedding // JSONB directo
+        ]
       );
     }
 
-    // 5️⃣ ELIMINAR ARCHIVO TEMPORAL
+    // 6️⃣ ELIMINAR ARCHIVO FÍSICO TEMPORAL
     fs.unlinkSync(rutaPDF);
 
     res.json({
@@ -109,6 +126,7 @@ exports.subirDocumento = async (req, res) => {
 
   } catch (error) {
     console.error("❌ Error al subir documento:", error);
+
     res.status(500).json({
       ok: false,
       mensaje: "Error interno del servidor",

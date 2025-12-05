@@ -9,58 +9,75 @@ const openai = new OpenAI({
 });
 
 // ========================================================
-// 🧮 Función: calcular similitud coseno
+// 🧮 Normalizar vector
 // ========================================================
-function cosineSimilarity(vecA, vecB) {
-  if (!vecA || !vecB || !Array.isArray(vecA) || !Array.isArray(vecB)) return -1;
-
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
-  }
-
-  if (normA === 0 || normB === 0) return -1;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+function normalize(vec) {
+  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+  return norm === 0 ? vec : vec.map(v => v / norm);
 }
 
 // ========================================================
-// 😎 IA ULTRA ESTRICTA — SOLO PDF, SOLO ESPAÑOL, CERO INVENTOS
+// 🧮 Función: similitud coseno (dot product)
+// ========================================================
+function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB) return -1;
+  let dot = 0;
+  for (let i = 0; i < vecA.length; i++) dot += vecA[i] * vecB[i];
+  return dot;
+}
+
+// ========================================================
+// 🔥 Reformular pregunta (mejor semántica)
+// ========================================================
+async function reformularPregunta(preguntaOriginal) {
+  const prompt = `
+Reformula la siguiente pregunta para que sea más clara y específica,
+manteniendo EXACTAMENTE el mismo significado. Responde solo con la pregunta reformulada:
+
+"${preguntaOriginal}"
+`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "Eres un asistente que mejora preguntas sin cambiar su intención." },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  return completion.choices[0].message.content.trim();
+}
+
+// ========================================================
+// 😎 IA ULTRA ESTRICTA — SOLO PDF
 // ========================================================
 async function generarRespuestaIA(pregunta, fragmentosTexto) {
   const systemPrompt = `
 Eres un asistente EXTREMADAMENTE ESTRICTO especializado en documentos odontológicos.
 
-REGLAS OBLIGATORIAS:
+REGLAS:
 1. Respondes SIEMPRE en español.
-2. NO inventas información.
+2. NO inventas nada.
 3. NO usas conocimientos externos.
-4. SOLO puedes usar información que esté en los fragmentos entregados.
-5. Si algo NO aparece en los fragmentos, debes responder EXACTAMENTE:
+4. SOLO puedes usar información contenida en los fragmentos entregados.
+5. Si no está en los fragmentos, responde EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
-6. Puedes traducir del inglés al español, pero SIN agregar nada adicional.
 `;
-
-  const mensajes = [
-    { role: "system", content: systemPrompt },
-    {
-      role: "assistant",
-      content: `Fragmentos relevantes del documento:\n${fragmentosTexto}`
-    },
-    { role: "user", content: pregunta }
-  ];
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
-    messages: mensajes,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "assistant", content: `Fragmentos relevantes:\n${fragmentosTexto}` },
+      { role: "user", content: pregunta },
+    ],
   });
 
   return completion.choices[0].message.content;
 }
 
 // ========================================================
-// 📌 Controlador principal: RAG REAL CON TODOS LOS PDFs
+// 📌 Controlador principal RAG mejorado
 // ========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -73,7 +90,18 @@ exports.preguntar = async (req, res) => {
       });
     }
 
-    // 1️⃣ TRAER TODOS LOS FRAGMENTOS DE TODA LA BASE
+    // 1️⃣ Reformular pregunta
+    const preguntaReformulada = await reformularPregunta(pregunta);
+
+    // 2️⃣ Embedding de la pregunta
+    const embPregunta = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: preguntaReformulada,
+    });
+
+    const preguntaEmbedding = normalize(embPregunta.data[0].embedding);
+
+    // 3️⃣ Obtener fragmentos
     const result = await pool.query(`
       SELECT fragmento_index, texto, embedding
       FROM documentos_fragmentos
@@ -86,26 +114,11 @@ exports.preguntar = async (req, res) => {
       });
     }
 
-    // 2️⃣ EMBEDDING de la pregunta
-    const embPregunta = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: pregunta,
-    });
-
-    const preguntaEmbedding = embPregunta.data[0].embedding;
-
-    // 3️⃣ PROCESAR fragmentos
+    // 4️⃣ Procesar fragmentos
     const fragmentosProcesados = result.rows.map(f => {
-      let emb = f.embedding;
+      let emb = Array.isArray(f.embedding) ? f.embedding : null;
 
-      if (typeof emb === "string") {
-        try {
-          emb = emb.replace(/{/g, "[").replace(/}/g, "]");
-          emb = JSON.parse(emb);
-        } catch (e) {
-          emb = null;
-        }
-      }
+      emb = emb ? normalize(emb) : null;
 
       return {
         index: f.fragmento_index,
@@ -115,27 +128,25 @@ exports.preguntar = async (req, res) => {
       };
     });
 
-    // 4️⃣ RANKING GLOBAL
+    // 5️⃣ Rankear TODOS los fragmentos (sin filtro)
     const top = fragmentosProcesados
-      .filter(f => f.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .slice(0, 12); // ← mayor recall
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
-    // 5️⃣ LLM estricto
+    // 6️⃣ Generar respuesta estricta
     const respuestaIA = await generarRespuestaIA(pregunta, contexto);
 
-    // 6️⃣ RESPUESTA FINAL
     res.json({
       ok: true,
+      pregunta_reformulada: preguntaReformulada,
       respuesta: respuestaIA,
       fragmentos_usados: top.length,
     });
 
   } catch (error) {
     console.error("❌ Error en preguntar:", error);
-
     res.status(500).json({
       ok: false,
       mensaje: "Error interno del servidor",
