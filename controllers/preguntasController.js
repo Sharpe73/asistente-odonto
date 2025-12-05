@@ -40,7 +40,6 @@ REGLAS OBLIGATORIAS:
 5. Si algo NO aparece en los fragmentos, debes responder EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
 6. Puedes traducir del inglés al español, pero SIN agregar nada adicional.
-7. No completes ideas, no asumas significados, no interpretes más allá del texto literal.
 `;
 
   const mensajes = [
@@ -61,31 +60,29 @@ REGLAS OBLIGATORIAS:
 }
 
 // ========================================================
-// 📌 Controlador principal: Embeddings + RAG real
+// 📌 Controlador principal: RAG REAL CON TODOS LOS PDFs
 // ========================================================
 exports.preguntar = async (req, res) => {
   try {
-    const { documentoId, pregunta } = req.body;
+    const { pregunta } = req.body;
 
-    if (!documentoId || !pregunta) {
+    if (!pregunta) {
       return res.status(400).json({
         ok: false,
-        mensaje: "documentoId y pregunta son obligatorios",
+        mensaje: "La pregunta es obligatoria",
       });
     }
 
-    // 1️⃣ OBTENER TODOS LOS FRAGMENTOS + EMBEDDINGS
-    const result = await pool.query(
-      `SELECT fragmento_index, texto, embedding
-       FROM documentos_fragmentos
-       WHERE documento_id = $1`,
-      [documentoId]
-    );
+    // 1️⃣ TRAER TODOS LOS FRAGMENTOS DE TODA LA BASE
+    const result = await pool.query(`
+      SELECT fragmento_index, texto, embedding
+      FROM documentos_fragmentos
+    `);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
         ok: false,
-        mensaje: "No se encontraron fragmentos para este documento",
+        mensaje: "No existen documentos cargados en la base",
       });
     }
 
@@ -118,7 +115,7 @@ exports.preguntar = async (req, res) => {
       };
     });
 
-    // 4️⃣ FILTRAR Y ORDENAR POR SIMILITUD
+    // 4️⃣ RANKING GLOBAL
     const top = fragmentosProcesados
       .filter(f => f.score > 0)
       .sort((a, b) => b.score - a.score)
@@ -126,10 +123,10 @@ exports.preguntar = async (req, res) => {
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
-    // 5️⃣ OBLIGAR respuesta estricta
+    // 5️⃣ LLM estricto
     const respuestaIA = await generarRespuestaIA(pregunta, contexto);
 
-    // 6️⃣ ENVIAR RESPUESTA
+    // 6️⃣ RESPUESTA FINAL
     res.json({
       ok: true,
       respuesta: respuestaIA,
