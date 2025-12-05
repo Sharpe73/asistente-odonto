@@ -24,14 +24,14 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // =========================================================
-// 🧠 NUEVA MEMORIA SEMÁNTICA (SIN PALABRAS CLAVES)
+// 🧠 NUEVA MEMORIA SEMÁNTICA PROFESIONAL (Opción A)
 // =========================================================
 async function expandirPreguntaCorta(session_id, pregunta) {
   const p = pregunta.trim().toLowerCase();
 
   const patronesCortos = [
-    /^y\s*.+/i,      // "y el paladar?"
-    /^y$/i,          // "y"
+    /^y\s*.+/i,
+    /^y$/,
     /^y eso/i,
     /^y que/i,
     /^y qué/i,
@@ -44,7 +44,9 @@ async function expandirPreguntaCorta(session_id, pregunta) {
   const esCorta = patronesCortos.some(pat => pat.test(p));
   if (!esCorta) return pregunta;
 
-  // Buscar ultima respuesta del bot
+  // =====================================================
+  // OBTENER ULTIMA RESPUESTA DEL BOT
+  // =====================================================
   const r = await pool.query(
     `SELECT mensaje FROM chat_historial
      WHERE session_id = $1 AND role = 'assistant'
@@ -52,15 +54,41 @@ async function expandirPreguntaCorta(session_id, pregunta) {
      LIMIT 1`,
     [session_id]
   );
-
   const ultimaRespuesta = r.rows[0]?.mensaje;
 
   if (!ultimaRespuesta) return pregunta;
 
-  // Construcción semántica limpia
+  // =====================================================
+  // EMBEDDING DE LA ULTIMA RESPUESTA Y PREGUNTA CORTA
+  // =====================================================
+  const emb = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: [ultimaRespuesta, pregunta]
+  });
+
+  const embRespuesta = emb.data[0].embedding;
+  const embPregunta = emb.data[1].embedding;
+
+  const similitud = cosineSimilarity(embRespuesta, embPregunta);
+
+  // =====================================================
+  // DETECCIÓN DE CAMBIO DE TEMA
+  // =====================================================
+  // Si similitud < 0.75 → tema totalmente nuevo → limpiar contexto
+  if (similitud < 0.75) {
+    return `
+La nueva pregunta del usuario no está relacionada con el tema anterior.
+Responder únicamente esto:
+"${pregunta.replace(/^y\s*/i, "")}".
+    `;
+  }
+
+  // =====================================================
+  // SI ES MISMO TEMA → EXPANDIR CON CONTEXTO
+  // =====================================================
   return `
-La siguiente pregunta del usuario depende del contexto. 
-Contexto anterior del asistente: "${ultimaRespuesta}".
+La siguiente pregunta depende del contexto anterior.
+Contexto previo del asistente: "${ultimaRespuesta}".
 Nueva pregunta del usuario: "${pregunta}".
   `;
 }
@@ -152,7 +180,7 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // Expansión semántica si es pregunta corta
+    // Expansión semántica
     const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
 
     // Guardar pregunta original
@@ -180,17 +208,17 @@ exports.preguntar = async (req, res) => {
     }));
 
     // =====================================================
-    // Embedding
+    // Embedding de la pregunta
     // =====================================================
-    const emb = await openai.embeddings.create({
+    const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: preguntaExpandida,
     });
 
-    const preguntaEmbedding = emb.data[0].embedding;
+    const preguntaEmbedding = embPregunta.data[0].embedding;
 
     // =====================================================
-    // Fragmentos del documento
+    // Fragmentos
     // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
