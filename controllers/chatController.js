@@ -7,7 +7,7 @@ const openai = new OpenAI({
 });
 
 // =========================================================
-// 🧮 Similitud coseno correcta
+// 🧮 Similitud coseno correcta (VERSIÓN QUE SI FUNCIONA)
 // =========================================================
 function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB) return -1;
@@ -27,7 +27,7 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // =========================================================
-// 🧠 Expansión semántica para preguntas cortas
+// 🧠 NUEVA MEMORIA SEMÁNTICA PROFESIONAL (Opción A)
 // =========================================================
 async function expandirPreguntaCorta(session_id, pregunta) {
   const p = pregunta.trim().toLowerCase();
@@ -56,6 +56,7 @@ async function expandirPreguntaCorta(session_id, pregunta) {
   );
 
   const ultimaRespuesta = r.rows[0]?.mensaje;
+
   if (!ultimaRespuesta) return pregunta;
 
   const emb = await openai.embeddings.create({
@@ -170,17 +171,14 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // Expansión semántica
     const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
 
-    // Guardar la pregunta original
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
       [session_id, pregunta]
     );
 
-    // Memoria
     const memRes = await pool.query(
       `SELECT role, mensaje
        FROM chat_historial
@@ -195,7 +193,6 @@ exports.preguntar = async (req, res) => {
       content: m.mensaje
     }));
 
-    // Embedding de la pregunta
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: preguntaExpandida,
@@ -203,7 +200,6 @@ exports.preguntar = async (req, res) => {
 
     const preguntaEmbedding = embPregunta.data[0].embedding;
 
-    // Obtener fragmentos
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
       FROM documentos_fragmentos
@@ -217,27 +213,25 @@ exports.preguntar = async (req, res) => {
         : f.embedding
     }));
 
-    // =====================================================
-    // 🔥 RANKING RAG SIN FILTRO (SOLUCIÓN AL PROBLEMA)
-    // =====================================================
+    // 🔥 AQUÍ ESTÁ LA CORRECCIÓN IMPORTANTE 🔥
     const top = fragmentos
       .map(f => ({
         ...f,
         score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
       }))
+      // ❌ .filter(f => f.score > 0) — FILTRAR MATA EL RAG
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
-    // Prompt final
     const mensajes = [
       {
         role: "system",
         content: `
 Eres Odonto-Bot, un asistente extremadamente estricto.
 REGLAS:
-1. Respondes SOLO en español de Chile.
+1. Respondes SOLO en español de chile.
 2. NO inventas nada.
 3. Si algo NO aparece en el documento debes decir EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
@@ -255,7 +249,6 @@ REGLAS:
       }
     ];
 
-    // LLM
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: mensajes
@@ -263,7 +256,6 @@ REGLAS:
 
     const respuesta = completion.choices[0].message.content;
 
-    // Guardar respuesta
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'assistant', $2)`,
