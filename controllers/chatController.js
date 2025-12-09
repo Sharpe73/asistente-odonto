@@ -16,7 +16,7 @@ function cosineSimilarity(vecA, vecB) {
   let dot = 0, normA = 0, normB = 0;
 
   for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];     // ← CORRECTO (antes estaba MAL)
+    dot += vecA[i] * vecB[i];
     normA += vecA[i] * vecA[i];
     normB += vecB[i] * vecB[i];
   }
@@ -24,75 +24,6 @@ function cosineSimilarity(vecA, vecB) {
   if (normA === 0 || normB === 0) return -1;
 
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-// =========================================================
-// 🧠 NUEVA MEMORIA SEMÁNTICA PROFESIONAL (Opción A)
-// =========================================================
-async function expandirPreguntaCorta(session_id, pregunta) {
-  const p = pregunta.trim().toLowerCase();
-
-  const patronesCortos = [
-    /^y\s*.+/i,
-    /^y$/,
-    /^y eso/i,
-    /^y que/i,
-    /^y qué/i,
-    /^y cual/i,
-    /^y cuál/i,
-    /^y cuales/i,
-    /^y entonces/i
-  ];
-
-  const esCorta = patronesCortos.some(pat => pat.test(p));
-  if (!esCorta) return pregunta;
-
-  // =====================================================
-  // OBTENER ULTIMA RESPUESTA DEL BOT
-  // =====================================================
-  const r = await pool.query(
-    `SELECT mensaje FROM chat_historial
-     WHERE session_id = $1 AND role = 'assistant'
-     ORDER BY creado_en DESC
-     LIMIT 1`,
-    [session_id]
-  );
-  const ultimaRespuesta = r.rows[0]?.mensaje;
-
-  if (!ultimaRespuesta) return pregunta;
-
-  // =====================================================
-  // EMBEDDING DE LA ULTIMA RESPUESTA Y PREGUNTA CORTA
-  // =====================================================
-  const emb = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: [ultimaRespuesta, pregunta]
-  });
-
-  const embRespuesta = emb.data[0].embedding;
-  const embPregunta = emb.data[1].embedding;
-
-  const similitud = cosineSimilarity(embRespuesta, embPregunta);
-
-  // =====================================================
-  // DETECCIÓN DE CAMBIO DE TEMA
-  // =====================================================
-  if (similitud < 0.75) {
-    return `
-La nueva pregunta del usuario no está relacionada con el tema anterior.
-Responder únicamente esto:
-"${pregunta.replace(/^y\s*/i, "")}".
-    `;
-  }
-
-  // =====================================================
-  // SI ES MISMO TEMA → EXPANDIR CON CONTEXTO
-  // =====================================================
-  return `
-La siguiente pregunta depende del contexto anterior.
-Contexto previo del asistente: "${ultimaRespuesta}".
-Nueva pregunta del usuario: "${pregunta}".
-  `;
 }
 
 // =========================================================
@@ -170,7 +101,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 PROCESAR PREGUNTA (RAG con TODOS los PDFs)
+// 🤖 PROCESAR PREGUNTA (RAG PURO SIN MEMORIA, SIN EXPANSIÓN)
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -182,10 +113,7 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // Expansión semántica
-    const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
-
-    // Guardar pregunta original
+    // Guardar la pregunta original
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
@@ -193,28 +121,11 @@ exports.preguntar = async (req, res) => {
     );
 
     // =====================================================
-    // MEMORIA (últimos 10 mensajes)
-    // =====================================================
-    const memRes = await pool.query(
-      `SELECT role, mensaje
-       FROM chat_historial
-       WHERE session_id = $1
-       ORDER BY creado_en ASC
-       LIMIT 10`,
-      [session_id]
-    );
-
-    const memoriaChat = memRes.rows.map(m => ({
-      role: m.role,
-      content: m.mensaje
-    }));
-
-    // =====================================================
     // Embedding de la pregunta
     // =====================================================
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: preguntaExpandida,
+      input: pregunta,
     });
 
     const preguntaEmbedding = embPregunta.data[0].embedding;
@@ -243,14 +154,16 @@ exports.preguntar = async (req, res) => {
         ...f,
         score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
       }))
-      .filter(f => f.score > 0)
+      .filter(f => f.score > 0) // si no pasa este filtro, realmente NO coincide con nada
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
 
-    const contexto = top.map(f => f.texto).join("\n\n");
+    const contexto = top.length > 0
+      ? top.map(f => f.texto).join("\n\n")
+      : "";
 
     // =====================================================
-    // Prompt final al modelo
+    // Prompt final al modelo (SIN MEMORIA, SIN EXPANSIONES)
     // =====================================================
     const mensajes = [
       {
@@ -258,21 +171,20 @@ exports.preguntar = async (req, res) => {
         content: `
 Eres Odonto-Bot, un asistente extremadamente estricto.
 REGLAS:
-1. Respondes SOLO en español de chile.
+1. Respondes SOLO en español de Chile.
 2. NO inventas nada.
-3. Si algo NO aparece en el documento debes decir EXACTAMENTE:
+3. Si algo NO aparece en los fragmentos debes decir EXACTAMENTE:
    "No tengo información suficiente en el documento para responder eso."
 4. Usa ÚNICAMENTE los fragmentos entregados.
 `
       },
-
-      ...memoriaChat,
-
-      { role: "user", content: preguntaExpandida },
-
       {
         role: "assistant",
         content: `Fragmentos relevantes del documento:\n${contexto}`
+      },
+      {
+        role: "user",
+        content: pregunta
       }
     ];
 
@@ -296,7 +208,6 @@ REGLAS:
     res.json({
       ok: true,
       respuesta,
-      pregunta_expandida: preguntaExpandida,
       fragmentos_usados: top.length
     });
 
