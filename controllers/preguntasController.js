@@ -78,7 +78,7 @@ REGLAS:
 3. NO usas conocimientos externos.
 4. SOLO puedes usar la información contenida en los fragmentos.
 5. Si no aparece en los fragmentos, responde EXACTAMENTE:
-   "No tengo información suficiente en el documento para responder eso."
+   "No dispongo de información que permita responder esa pregunta."
 `;
 
   const completion = await openai.chat.completions.create({

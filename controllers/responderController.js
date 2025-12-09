@@ -39,7 +39,7 @@ REGLAS:
 3. NO usas información externa.
 4. SOLO respondes usando los fragmentos entregados.
 5. Si la información NO aparece literal, responde:
-   "No tengo información suficiente en el documento para responder eso."
+   "No dispongo de información que permita responder esa pregunta."
 6. Puedes traducir contenido del inglés al español sin agregar detalles.
 `
     },

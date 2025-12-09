@@ -174,7 +174,7 @@ REGLAS:
 1. Respondes SOLO en español de Chile.
 2. NO inventas nada.
 3. Si algo NO aparece en los fragmentos debes decir EXACTAMENTE:
-   "No tengo información suficiente en el documento para responder eso."
+   "No dispongo de información que permita responder esa pregunta."
 4. Usa ÚNICAMENTE los fragmentos entregados.
 `
       },
