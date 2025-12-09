@@ -16,7 +16,7 @@ function cosineSimilarity(vecA, vecB) {
   let dot = 0, normA = 0, normB = 0;
 
   for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];     // ← CORRECTO (antes estaba MAL)
+    dot += vecA[i] * vecB[i];
     normA += vecA[i] * vecA[i];
     normB += vecB[i] * vecB[i];
   }
@@ -47,9 +47,6 @@ async function expandirPreguntaCorta(session_id, pregunta) {
   const esCorta = patronesCortos.some(pat => pat.test(p));
   if (!esCorta) return pregunta;
 
-  // =====================================================
-  // OBTENER ULTIMA RESPUESTA DEL BOT
-  // =====================================================
   const r = await pool.query(
     `SELECT mensaje FROM chat_historial
      WHERE session_id = $1 AND role = 'assistant'
@@ -61,9 +58,6 @@ async function expandirPreguntaCorta(session_id, pregunta) {
 
   if (!ultimaRespuesta) return pregunta;
 
-  // =====================================================
-  // EMBEDDING DE LA ULTIMA RESPUESTA Y PREGUNTA CORTA
-  // =====================================================
   const emb = await openai.embeddings.create({
     model: "text-embedding-3-small",
     input: [ultimaRespuesta, pregunta]
@@ -74,9 +68,6 @@ async function expandirPreguntaCorta(session_id, pregunta) {
 
   const similitud = cosineSimilarity(embRespuesta, embPregunta);
 
-  // =====================================================
-  // DETECCIÓN DE CAMBIO DE TEMA
-  // =====================================================
   if (similitud < 0.75) {
     return `
 La nueva pregunta del usuario no está relacionada con el tema anterior.
@@ -85,9 +76,6 @@ Responder únicamente esto:
     `;
   }
 
-  // =====================================================
-  // SI ES MISMO TEMA → EXPANDIR CON CONTEXTO
-  // =====================================================
   return `
 La siguiente pregunta depende del contexto anterior.
 Contexto previo del asistente: "${ultimaRespuesta}".
@@ -182,19 +170,14 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // Expansión semántica
     const preguntaExpandida = await expandirPreguntaCorta(session_id, pregunta);
 
-    // Guardar pregunta original
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
       [session_id, pregunta]
     );
 
-    // =====================================================
-    // MEMORIA (últimos 10 mensajes)
-    // =====================================================
     const memRes = await pool.query(
       `SELECT role, mensaje
        FROM chat_historial
@@ -209,9 +192,6 @@ exports.preguntar = async (req, res) => {
       content: m.mensaje
     }));
 
-    // =====================================================
-    // Embedding de la pregunta
-    // =====================================================
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: preguntaExpandida,
@@ -219,9 +199,6 @@ exports.preguntar = async (req, res) => {
 
     const preguntaEmbedding = embPregunta.data[0].embedding;
 
-    // =====================================================
-    // Obtener TODOS los fragmentos de TODOS los PDFs
-    // =====================================================
     const fragRes = await pool.query(`
       SELECT fragmento_index, texto, embedding
       FROM documentos_fragmentos
@@ -235,21 +212,22 @@ exports.preguntar = async (req, res) => {
         : f.embedding
     }));
 
-    // =====================================================
-    // Ranking RAG (TOP 5 fragmentos más similares)
-    // =====================================================
     const top = fragmentos
-  .map(f => ({
-    ...f,
-    score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
-  }))
-  // ❌ Se elimina el filtro porque hace fallar la primera búsqueda
-  .sort((a, b) => b.score - a.score)
-  .slice(0, 5);
+      .map(f => ({
+        ...f,
+        score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
 
-    // =====================================================
-    // Prompt final al modelo
-    // =====================================================
+    // =========================================================
+    // 🔥 ESTA LÍNEA ES LA CORRECCIÓN REAL
+    // =========================================================
+    const contexto = top.map(f => f.texto).join("\n\n");
+
+    // =========================================================
+    // Prompt final
+    // =========================================================
     const mensajes = [
       {
         role: "system",
@@ -274,9 +252,6 @@ REGLAS:
       }
     ];
 
-    // =====================================================
-    // LLM
-    // =====================================================
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: mensajes
@@ -284,7 +259,6 @@ REGLAS:
 
     const respuesta = completion.choices[0].message.content;
 
-    // Guardar respuesta
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'assistant', $2)`,
