@@ -239,15 +239,13 @@ exports.preguntar = async (req, res) => {
     // Ranking RAG (TOP 5 fragmentos más similares)
     // =====================================================
     const top = fragmentos
-      .map(f => ({
-        ...f,
-        score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
-      }))
-      .filter(f => f.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-
-    const contexto = top.map(f => f.texto).join("\n\n");
+  .map(f => ({
+    ...f,
+    score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
+  }))
+  // ❌ Se elimina el filtro porque hace fallar la primera búsqueda
+  .sort((a, b) => b.score - a.score)
+  .slice(0, 5);
 
     // =====================================================
     // Prompt final al modelo
