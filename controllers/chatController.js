@@ -217,19 +217,18 @@ exports.preguntar = async (req, res) => {
         : f.embedding
     }));
 
-    // Ranking RAG
+    // =====================================================
+    // 🔥 RANKING RAG SIN FILTRO (SOLUCIÓN AL PROBLEMA)
+    // =====================================================
     const top = fragmentos
       .map(f => ({
         ...f,
         score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
       }))
-      .filter(f => f.score > 0.05)   // ← FILTRO INTELIGENTE
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
 
-    const contexto = top.length > 0
-      ? top.map(f => f.texto).join("\n\n")
-      : "";
+    const contexto = top.map(f => f.texto).join("\n\n");
 
     // Prompt final
     const mensajes = [
