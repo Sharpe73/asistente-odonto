@@ -40,7 +40,7 @@ function semanticBoost(pregunta, texto) {
     }
   }
 
-  return coincidencias * 0.25; // cada coincidencia añade 0.25
+  return coincidencias * 0.25; 
 }
 
 // ========================================================
@@ -48,7 +48,7 @@ function semanticBoost(pregunta, texto) {
 // ========================================================
 async function reformularPregunta(preguntaOriginal) {
   const prompt = `
-Reformula la siguiente pregunta para que sea más clara y específica,
+Reformula la siguiente pregunta para que sea clara y específica,
 sin cambiar su intención. Responde solo la pregunta reformulada:
 
 "${preguntaOriginal}"
@@ -57,7 +57,7 @@ sin cambiar su intención. Responde solo la pregunta reformulada:
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: "Eres un asistente que mejora preguntas sin cambiar su intención." },
+      { role: "system", content: "Reformula preguntas sin cambiar su intención." },
       { role: "user", content: prompt },
     ],
   });
@@ -66,35 +66,49 @@ sin cambiar su intención. Responde solo la pregunta reformulada:
 }
 
 // ========================================================
-// 😎 IA ULTRA ESTRICTA — SOLO INFO DEL PDF
+// 😎 IA ULTRA ESTRICTA MODO B — SIN INVENTOS
 // ========================================================
 async function generarRespuestaIA(pregunta, fragmentosTexto) {
+
   const systemPrompt = `
-Eres un asistente EXTREMADAMENTE ESTRICTO especializado en documentos odontológicos.
+Eres un asistente extremadamente estricto. 
 
 REGLAS:
 1. Respondes SIEMPRE en español.
-2. NO inventas nada.
+2. NO inventas absolutamente nada.
 3. NO usas conocimientos externos.
 4. SOLO puedes usar la información contenida en los fragmentos.
-5. Si no aparece en los fragmentos, responde EXACTAMENTE:
+5. Si la respuesta está parcialmente en fragmentos, entrega SOLO la parte presente.
+6. Si falta información, dilo explícitamente.
+7. Si NO hay información útil en los fragmentos, responde exactamente:
    "No dispongo de información que permita responder esa pregunta."
+`;
+
+  const userPrompt = `
+Pregunta: ${pregunta}
+
+Fragmentos:
+${fragmentosTexto}
+
+INSTRUCCIONES:
+- Si un fragmento responde parte de la pregunta, úsalo.
+- Si falta información, dilo claramente.
+- No completes nada que no esté en los fragmentos.
 `;
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "assistant", content: `Fragmentos relevantes:\n${fragmentosTexto}` },
-      { role: "user", content: pregunta },
+      { role: "user", content: userPrompt },
     ],
   });
 
-  return completion.choices[0].message.content;
+  return completion.choices[0].message.content.trim();
 }
 
 // ========================================================
-// 📌 Controlador principal RAG mejorado
+// 📌 Controlador principal RAG mejorado MODO B
 // ========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -131,18 +145,17 @@ exports.preguntar = async (req, res) => {
       });
     }
 
-    // 4️⃣ Procesar fragmentos con boosting semántico
+    // 4️⃣ Procesar fragmentos con BOOST + similitud
     const fragmentosProcesados = result.rows.map(f => {
       let emb = null;
 
-      // 🔥 FIX: Parsear embedding JSONB → array JS
       try {
         if (typeof f.embedding === "string") {
           emb = JSON.parse(f.embedding);
         } else if (Array.isArray(f.embedding)) {
           emb = f.embedding;
         }
-      } catch (e) {
+      } catch {
         emb = null;
       }
 
@@ -154,7 +167,7 @@ exports.preguntar = async (req, res) => {
       return {
         index: f.fragmento_index,
         texto: f.texto,
-        score: scoreBase + boost, // 💥 similitud híbrida
+        score: scoreBase + boost,
       };
     });
 
@@ -165,7 +178,7 @@ exports.preguntar = async (req, res) => {
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
-    // 6️⃣ Respuesta
+    // 6️⃣ Generar respuesta MODO B
     const respuestaIA = await generarRespuestaIA(pregunta, contexto);
 
     res.json({
