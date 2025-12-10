@@ -133,7 +133,19 @@ exports.preguntar = async (req, res) => {
 
     // 4️⃣ Procesar fragmentos con boosting semántico
     const fragmentosProcesados = result.rows.map(f => {
-      let emb = Array.isArray(f.embedding) ? f.embedding : null;
+      let emb = null;
+
+      // 🔥 FIX: Parsear embedding JSONB → array JS
+      try {
+        if (typeof f.embedding === "string") {
+          emb = JSON.parse(f.embedding);
+        } else if (Array.isArray(f.embedding)) {
+          emb = f.embedding;
+        }
+      } catch (e) {
+        emb = null;
+      }
+
       emb = emb ? normalize(emb) : null;
 
       const scoreBase = emb ? cosineSimilarity(preguntaEmbedding, emb) : 0;

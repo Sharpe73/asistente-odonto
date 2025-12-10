@@ -6,28 +6,91 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// =========================================================
-// 🧮 Similitud coseno correcta (VERSIÓN QUE SI FUNCIONA)
-// =========================================================
+// ========================================================
+// 🔧 Normalizar vector
+// ========================================================
+function normalize(vec) {
+  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+  return norm === 0 ? vec : vec.map(v => v / norm);
+}
+
+// ========================================================
+// 🔧 Similitud coseno real
+// ========================================================
 function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB) return -1;
-  if (!Array.isArray(vecA) || !Array.isArray(vecB)) return -1;
-
-  let dot = 0, normA = 0, normB = 0;
-
+  let dot = 0;
   for (let i = 0; i < vecA.length; i++) {
     dot += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
+  }
+  return dot;
+}
+
+// ========================================================
+// 🔧 Boost semántico
+// ========================================================
+function semanticBoost(pregunta, texto) {
+  const palabrasPregunta = pregunta.toLowerCase().split(/\W+/);
+  const palabrasTexto = texto.toLowerCase().split(/\W+/);
+
+  let coincidencias = 0;
+  for (const palabra of palabrasPregunta) {
+    if (palabra.length > 3 && palabrasTexto.includes(palabra)) {
+      coincidencias += 1;
+    }
   }
 
-  if (normA === 0 || normB === 0) return -1;
+  return coincidencias * 0.25;
+}
 
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+// ========================================================
+// 🔧 Reformular pregunta
+// ========================================================
+async function reformularPregunta(preguntaOriginal) {
+  const prompt = `
+Reformula la siguiente pregunta sin cambiar su intención.
+"${preguntaOriginal}"
+`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "Eres un asistente que mejora preguntas sin cambiar su intención." },
+      { role: "user", content: prompt }
+    ],
+  });
+
+  return completion.choices[0].message.content.trim();
+}
+
+// ========================================================
+// 🔧 IA ultra estricta
+// ========================================================
+async function generarRespuestaIA(pregunta, fragmentosTexto) {
+  const systemPrompt = `
+Eres Odonto-Bot.  
+Reglas:
+1. Respondes solo en español.
+2. No inventas nada.
+3. Solo usas los fragmentos entregados.
+4. Si falta información, responde EXACTAMENTE:
+   "No dispongo de información que permita responder esa pregunta."
+`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "assistant", content: `Fragmentos:\n${fragmentosTexto}` },
+      { role: "user", content: pregunta },
+    ],
+  });
+
+  return completion.choices[0].message.content;
 }
 
 // =========================================================
-// 📌 Registrar mensaje
+// 📌 registrarMensaje
 // =========================================================
 exports.registrarMensaje = async (req, res) => {
   try {
@@ -37,7 +100,7 @@ exports.registrarMensaje = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: "session_id es obligatorio" });
 
     if (!["user", "assistant"].includes(role))
-      return res.status(400).json({ ok: false, mensaje: "role debe ser user o assistant" });
+      return res.status(400).json({ ok: false, mensaje: "role inválido" });
 
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
@@ -54,7 +117,7 @@ exports.registrarMensaje = async (req, res) => {
 };
 
 // =========================================================
-// 📌 Obtener historial
+// 📌 obtenerHistorial
 // =========================================================
 exports.obtenerHistorial = async (req, res) => {
   try {
@@ -76,7 +139,7 @@ exports.obtenerHistorial = async (req, res) => {
 };
 
 // =========================================================
-// 🆕 Crear sesión
+// 🆕 crearSesion
 // =========================================================
 exports.crearSesion = async (req, res) => {
   try {
@@ -88,20 +151,16 @@ exports.crearSesion = async (req, res) => {
       [session_id]
     );
 
-    res.json({
-      ok: true,
-      session_id,
-      mensaje: "Sesión creada correctamente"
-    });
+    res.json({ ok: true, session_id });
 
-  } catch (error) {
-    console.error("Error creando sesión:", error);
+  } catch (e) {
+    console.error("Error crear sesión:", e);
     res.status(500).json({ ok: false });
   }
 };
 
 // =========================================================
-// 🤖 PROCESAR PREGUNTA (RAG PURO SIN MEMORIA, SIN EXPANSIÓN)
+// 🤖 PROCESAR PREGUNTA — RAG COMPLETO
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -113,90 +172,62 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // Guardar la pregunta original
+    // Guardar pregunta del usuario
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
       [session_id, pregunta]
     );
 
-    // =====================================================
-    // Embedding de la pregunta
-    // =====================================================
+    // 1️⃣ Reformular
+    const preguntaReformulada = await reformularPregunta(pregunta);
+
+    // 2️⃣ Embedding pregunta
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: pregunta,
+      input: preguntaReformulada,
     });
 
-    const preguntaEmbedding = embPregunta.data[0].embedding;
+    const preguntaEmbedding = normalize(embPregunta.data[0].embedding);
 
-    // =====================================================
-    // Obtener TODOS los fragmentos de TODOS los PDFs
-    // =====================================================
-    const fragRes = await pool.query(`
+    // 3️⃣ Obtener fragmentos
+    const result = await pool.query(`
       SELECT fragmento_index, texto, embedding
       FROM documentos_fragmentos
     `);
 
-    const fragmentos = fragRes.rows.map(f => ({
-      index: f.fragmento_index,
-      texto: f.texto,
-      embedding: typeof f.embedding === "string"
-        ? JSON.parse(f.embedding.replace(/{/g, "[").replace(/}/g, "]"))
-        : f.embedding
-    }));
+    const fragmentos = result.rows.map(f => {
+      let emb = null;
 
-    // =====================================================
-    // Ranking RAG (TOP 5 fragmentos más similares)
-    // =====================================================
-    const top = fragmentos
-      .map(f => ({
-        ...f,
-        score: f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : -1
-      }))
-      .filter(f => f.score > 0) // si no pasa este filtro, realmente NO coincide con nada
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-
-    const contexto = top.length > 0
-      ? top.map(f => f.texto).join("\n\n")
-      : "";
-
-    // =====================================================
-    // Prompt final al modelo (SIN MEMORIA, SIN EXPANSIONES)
-    // =====================================================
-    const mensajes = [
-      {
-        role: "system",
-        content: `
-Eres Odonto-Bot, un asistente extremadamente estricto.
-REGLAS:
-1. Respondes SOLO en español de Chile.
-2. NO inventas nada.
-3. Si algo NO aparece en los fragmentos debes decir EXACTAMENTE:
-   "No dispongo de información que permita responder esa pregunta."
-4. Usa ÚNICAMENTE los fragmentos entregados.
-`
-      },
-      {
-        role: "assistant",
-        content: `Fragmentos relevantes del documento:\n${contexto}`
-      },
-      {
-        role: "user",
-        content: pregunta
+      try {
+        if (typeof f.embedding === "string") emb = JSON.parse(f.embedding);
+        else if (Array.isArray(f.embedding)) emb = f.embedding;
+      } catch {
+        emb = null;
       }
-    ];
 
-    // =====================================================
-    // LLM
-    // =====================================================
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: mensajes
+      emb = emb ? normalize(emb) : null;
+
+      return {
+        index: f.fragmento_index,
+        texto: f.texto,
+        embedding: emb,
+      };
     });
 
-    const respuesta = completion.choices[0].message.content;
+    // 4️⃣ Ranking
+    const ranked = fragmentos.map(f => {
+      const sim = f.embedding ? cosineSimilarity(preguntaEmbedding, f.embedding) : 0;
+      const boost = semanticBoost(preguntaReformulada, f.texto);
+      return { ...f, score: sim + boost };
+    });
+
+    const top = ranked.sort((a, b) => b.score - a.score).slice(0, 12);
+
+    const contexto = top.map(f => f.texto).join("\n\n");
+
+    // 5️⃣ Generar respuesta
+    const respuesta = await generarRespuestaIA(pregunta, contexto);
 
     // Guardar respuesta
     await pool.query(
@@ -208,7 +239,8 @@ REGLAS:
     res.json({
       ok: true,
       respuesta,
-      fragmentos_usados: top.length
+      fragmentos_usados: top.length,
+      scores: top.map(t => t.score),
     });
 
   } catch (e) {
