@@ -15,7 +15,7 @@ function normalize(vec) {
 }
 
 // ========================================================
-// 🔧 Similitud coseno real
+// 🔧 Similitud coseno (producto punto normalizado)
 // ========================================================
 function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB) return -1;
@@ -27,7 +27,7 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 // ========================================================
-// 🔧 Boost semántico
+// 🔧 Pequeño boost semántico real
 // ========================================================
 function semanticBoost(pregunta, texto) {
   const palabrasPregunta = pregunta.toLowerCase().split(/\W+/);
@@ -44,19 +44,14 @@ function semanticBoost(pregunta, texto) {
 }
 
 // ========================================================
-// 🔧 Reformular pregunta
+// 🔧 Reformular pregunta para mejor embedding
 // ========================================================
 async function reformularPregunta(preguntaOriginal) {
-  const prompt = `
-Reformula la siguiente pregunta sin cambiar su intención.
-"${preguntaOriginal}"
-`;
-
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: "Eres un asistente que mejora preguntas sin cambiar su intención." },
-      { role: "user", content: prompt }
+      { role: "system", content: "Reformula la pregunta sin cambiar su intención." },
+      { role: "user", content: preguntaOriginal }
     ],
   });
 
@@ -64,29 +59,28 @@ Reformula la siguiente pregunta sin cambiar su intención.
 }
 
 // ========================================================
-// 🔧 IA ultra estricta
+// 🔧 IA estricta SIN inventar NADA
 // ========================================================
-async function generarRespuestaIA(pregunta, fragmentosTexto) {
+async function generarRespuestaIA(pregunta, textoBase) {
   const systemPrompt = `
-Eres Odonto-Bot.  
-Reglas:
-1. Respondes solo en español.
-2. No inventas nada.
-3. Solo usas los fragmentos entregados.
-4. Si falta información, responde EXACTAMENTE:
-   "No dispongo de información que permita responder esa pregunta."
+Eres Odonto-Bot.
+Responde SIEMPRE en español.
+No inventes información.
+Utiliza únicamente el contenido proporcionado como referencia.
+Si no encuentras información suficiente para responder, responde EXACTAMENTE:
+"No dispongo de información que permita responder esa pregunta."
 `;
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "assistant", content: `Fragmentos:\n${fragmentosTexto}` },
+      { role: "assistant", content: textoBase },
       { role: "user", content: pregunta },
     ],
   });
 
-  return completion.choices[0].message.content;
+  return completion.choices[0].message.content.trim();
 }
 
 // =========================================================
@@ -160,7 +154,7 @@ exports.crearSesion = async (req, res) => {
 };
 
 // =========================================================
-// 🤖 PROCESAR PREGUNTA — RAG COMPLETO
+// 🤖 PROCESAR PREGUNTA — RAG PROFESIONAL
 // =========================================================
 exports.preguntar = async (req, res) => {
   try {
@@ -172,7 +166,7 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
-    // Guardar pregunta del usuario
+    // Guardar pregunta
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
        VALUES ($1, 'user', $2)`,
@@ -182,7 +176,7 @@ exports.preguntar = async (req, res) => {
     // 1️⃣ Reformular
     const preguntaReformulada = await reformularPregunta(pregunta);
 
-    // 2️⃣ Embedding pregunta
+    // 2️⃣ Embedding
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: preguntaReformulada,
@@ -224,9 +218,25 @@ exports.preguntar = async (req, res) => {
 
     const top = ranked.sort((a, b) => b.score - a.score).slice(0, 12);
 
+    // Si los puntajes son extremadamente bajos → no hay información suficiente
+    const maxScore = top.length > 0 ? top[0].score : 0;
+
+    if (maxScore < 0.05) {
+      const finalResp = "No dispongo de información que permita responder esa pregunta.";
+
+      await pool.query(
+        `INSERT INTO chat_historial (session_id, role, mensaje)
+         VALUES ($1, 'assistant', $2)`,
+        [session_id, finalResp]
+      );
+
+      return res.json({ ok: true, respuesta: finalResp });
+    }
+
+    // Crear contexto
     const contexto = top.map(f => f.texto).join("\n\n");
 
-    // 5️⃣ Generar respuesta
+    // 5️⃣ Generar respuesta de IA sin inventar
     const respuesta = await generarRespuestaIA(pregunta, contexto);
 
     // Guardar respuesta
@@ -239,8 +249,6 @@ exports.preguntar = async (req, res) => {
     res.json({
       ok: true,
       respuesta,
-      fragmentos_usados: top.length,
-      scores: top.map(t => t.score),
     });
 
   } catch (e) {
