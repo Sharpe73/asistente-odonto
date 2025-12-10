@@ -7,20 +7,24 @@ const openai = new OpenAI({
 });
 
 // =========================================================
-// 🧮 Similitud coseno
+// 🧮 Normalizar vector
+// =========================================================
+function normalize(vec) {
+  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+  return norm === 0 ? vec : vec.map(v => v / norm);
+}
+
+// =========================================================
+// 🧮 Similitud coseno normalizada
 // =========================================================
 function cosineSimilarity(vecA, vecB) {
-  if (!vecA || !vecB || !Array.isArray(vecA) || !Array.isArray(vecB)) return -1;
+  if (!vecA || !vecB) return -1;
 
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0;
   for (let i = 0; i < vecA.length; i++) {
     dot += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
   }
-
-  if (normA === 0 || normB === 0) return -1;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return dot;
 }
 
 // =========================================================
@@ -34,14 +38,13 @@ async function generarRespuestaIA(pregunta, fragmentosTexto) {
 Eres un asistente extremadamente estricto especializado en documentos odontológicos.
 
 REGLAS:
-1. Respondes SIEMPRE en español.
-2. NO inventas nada.
-3. NO usas información externa.
-4. SOLO respondes usando los fragmentos entregados.
-5. Si la información NO aparece literal, responde:
+1. Respondes siempre en español.
+2. No inventas nada.
+3. No usas información externa.
+4. Solo respondes usando los fragmentos entregados.
+5. Si la información no aparece en los fragmentos, responde EXACTAMENTE:
    "No dispongo de información que permita responder esa pregunta."
-6. Puedes traducir contenido del inglés al español sin agregar detalles.
-`
+      `
     },
     {
       role: "assistant",
@@ -59,7 +62,7 @@ REGLAS:
 }
 
 // =========================================================
-// 🤖 CONTROLADOR FINAL: embeddings + similitud + IA segura
+// 🤖 CONTROLADOR FINAL optimizado: RAG real + IA segura
 // =========================================================
 exports.responderPregunta = async (req, res) => {
   try {
@@ -87,26 +90,27 @@ exports.responderPregunta = async (req, res) => {
       });
     }
 
-    // 2️⃣ EMBEDDING DE LA PREGUNTA
+    // 2️⃣ EMBEDDING DE LA PREGUNTA + normalización
     const embPregunta = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: pregunta,
     });
 
-    const preguntaEmbedding = embPregunta.data[0].embedding;
+    const preguntaEmbedding = normalize(embPregunta.data[0].embedding);
 
-    // 3️⃣ PROCESAR FRAGMENTOS
+    // 3️⃣ PROCESAR FRAGMENTOS (parse + normalización)
     const fragmentosProcesados = result.rows.map(f => {
       let emb = f.embedding;
 
       if (typeof emb === "string") {
         try {
-          emb = emb.replace(/{/g, "[").replace(/}/g, "]");
-          emb = JSON.parse(emb);
+          emb = JSON.parse(emb.replace(/{/g, "[").replace(/}/g, "]"));
         } catch {
           emb = null;
         }
       }
+
+      emb = Array.isArray(emb) ? normalize(emb) : null;
 
       return {
         index: f.fragmento_index,
@@ -116,18 +120,17 @@ exports.responderPregunta = async (req, res) => {
       };
     });
 
-    // 4️⃣ OBTENER TOP 5 FRAGMENTOS
+    // 4️⃣ RANKING — AHORA NO FILTRAMOS SCORE > 0
     const top = fragmentosProcesados
-      .filter(f => f.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .slice(0, 12); // más robusto
 
     const contexto = top.map(f => f.texto).join("\n\n");
 
     // 5️⃣ OBTENER RESPUESTA ULTRA ESTRICTA
     const respuestaIA = await generarRespuestaIA(pregunta, contexto);
 
-    // 6️⃣ RESPONDER
+    // 6️⃣ RESPUESTA FINAL
     res.json({
       ok: true,
       respuesta: respuestaIA,
