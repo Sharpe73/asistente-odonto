@@ -9,24 +9,27 @@ function limpiarTexto(raw) {
 
   let texto = raw;
 
-  // Unir palabras cortadas por guiones
+  // Unir palabras cortadas por guiones (problema común en papers científicos)
   texto = texto.replace(/-\s*\n/g, "");
 
-  // Reemplazar saltos múltiples por un solo salto
+  // Reducir múltiples saltos de línea a uno solo
   texto = texto.replace(/\n{2,}/g, "\n");
 
-  // Remover números de página típicos
+  // Eliminar números de página y formatos tipo "Page 1 / 12"
   texto = texto.replace(/\bPage\s*\d+\b/gi, "");
   texto = texto.replace(/\b\d+\s*\/\s*\d+\b/g, "");
 
   // Normalizar espacios
   texto = texto.replace(/[ \t]{2,}/g, " ");
 
-  // Mantener saltos de línea para conservar estructura
-  texto = texto.replace(/\n/g, " ");
+  // Mantener saltos de línea para preservar PÁRRAFOS
+  texto = texto.replace(/\r/g, "");
+
+  // Eliminar espacios exteriores
+  texto = texto.trim();
 
   // Normalizar acentos
-  texto = texto.normalize("NFC").trim();
+  texto = texto.normalize("NFC");
 
   return texto;
 }
@@ -46,9 +49,9 @@ async function extraerTextoDesdePDF(rutaPDF) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
 
-      // Respetar estructura de párrafos
+      // Respetar estructura por líneas → luego se transforman en párrafos
       const strings = content.items.map((item) => item.str).join(" ");
-      texto += strings + "\n\n";
+      texto += strings + "\n";
     }
 
     return limpiarTexto(texto);
@@ -59,35 +62,52 @@ async function extraerTextoDesdePDF(rutaPDF) {
 }
 
 // ============================
-// ✂️ FRAGMENTAR TEXTO (OPTIMIZADO)
+// ✂️ FRAGMENTAR TEXTO POR PÁRRAFOS (VERSIÓN PROFESIONAL)
 // ============================
-// 🔥 Ahora usa fragmentos de 500 caracteres para mejorar precisión RAG
-// 🔥 Corte inteligente en puntos o espacios para no romper ideas
-function fragmentarTexto(texto, maxLength = 500) {
+//
+// 🔥 Esta es la forma correcta para papers científicos.
+// 🔥 Cada párrafo mantiene una idea completa.
+// 🔥 MUCHÍSIMO más preciso que cortar por caracteres.
+//
+function fragmentarTexto(texto) {
+  if (!texto) return [];
+
+  // Separar por saltos de línea
+  let parrafos = texto.split("\n");
+
+  // Limpiar párrafos vacíos
+  parrafos = parrafos
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+
+  // Algunos párrafos pueden ser demasiado largos.  
+  // Los dividimos inteligentemente en bloques de máximo 800 caracteres.
   const fragmentos = [];
-  let inicio = 0;
 
-  while (inicio < texto.length) {
-    let fin = inicio + maxLength;
+  for (const p of parrafos) {
+    if (p.length <= 800) {
+      fragmentos.push(p);
+    } else {
+      // Dividir párrafo largo sin romper ideas
+      let inicio = 0;
+      while (inicio < p.length) {
+        let fin = inicio + 800;
 
-    // Evitar cortar a la mitad una frase
-    if (fin < texto.length) {
-      const ultimoPunto = texto.lastIndexOf(".", fin);
-      const ultimoEspacio = texto.lastIndexOf(" ", fin);
+        if (fin < p.length) {
+          const ultimoPunto = p.lastIndexOf(".", fin);
+          const ultimoEspacio = p.lastIndexOf(" ", fin);
 
-      if (ultimoPunto > inicio + 100) {
-        // Cortar en punto final
-        fin = ultimoPunto + 1;
-      } else if (ultimoEspacio > inicio + 100) {
-        // Cortar en espacio para evitar palabras cortadas
-        fin = ultimoEspacio;
+          if (ultimoPunto > inicio + 200) {
+            fin = ultimoPunto + 1;
+          } else if (ultimoEspacio > inicio + 200) {
+            fin = ultimoEspacio;
+          }
+        }
+
+        fragmentos.push(p.substring(inicio, fin).trim());
+        inicio = fin;
       }
     }
-
-    const fragmento = texto.substring(inicio, fin).trim();
-    fragmentos.push(fragmento);
-
-    inicio = fin;
   }
 
   return fragmentos;
