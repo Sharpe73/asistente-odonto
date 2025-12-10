@@ -86,7 +86,7 @@ exports.subirDocumento = async (req, res) => {
     const documentoId = resultadoDoc.rows[0].id;
 
     // 4️⃣ FRAGMENTAR (nueva longitud óptima)
-    const fragmentos = fragmentarTexto(textoExtraído, 1800);
+    const fragmentos = fragmentarTexto(textoExtraído, 500); // CAMBIO IMPORTANTE
 
     console.log(`🧩 Total de fragmentos generados: ${fragmentos.length}`);
 
@@ -101,7 +101,6 @@ exports.subirDocumento = async (req, res) => {
 
       const embedding = embeddingResponse.data[0].embedding;
 
-      // 🔥🔥 JSONB directo, sin stringify
       await pool.query(
         `INSERT INTO documentos_fragmentos 
           (documento_id, fragmento_index, texto, embedding)
@@ -110,7 +109,7 @@ exports.subirDocumento = async (req, res) => {
           documentoId,
           i + 1,
           textoFragmento,
-          JSON.stringify(embedding) // ← ESTA ES LA FORMA CORRECTA
+          JSON.stringify(embedding)
         ]
       );
     }

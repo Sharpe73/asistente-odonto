@@ -61,19 +61,26 @@ async function extraerTextoDesdePDF(rutaPDF) {
 // ============================
 // ✂️ FRAGMENTAR TEXTO (OPTIMIZADO)
 // ============================
-// 🔥 Usa fragmentos de 1800 + corte inteligente en puntos finales
-function fragmentarTexto(texto, maxLength = 1800) {
+// 🔥 Ahora usa fragmentos de 500 caracteres para mejorar precisión RAG
+// 🔥 Corte inteligente en puntos o espacios para no romper ideas
+function fragmentarTexto(texto, maxLength = 500) {
   const fragmentos = [];
   let inicio = 0;
 
   while (inicio < texto.length) {
     let fin = inicio + maxLength;
 
-    // Si se corta en medio de una frase, mover hacia atrás hasta un punto
+    // Evitar cortar a la mitad una frase
     if (fin < texto.length) {
       const ultimoPunto = texto.lastIndexOf(".", fin);
-      if (ultimoPunto > inicio + 300) {
+      const ultimoEspacio = texto.lastIndexOf(" ", fin);
+
+      if (ultimoPunto > inicio + 100) {
+        // Cortar en punto final
         fin = ultimoPunto + 1;
+      } else if (ultimoEspacio > inicio + 100) {
+        // Cortar en espacio para evitar palabras cortadas
+        fin = ultimoEspacio;
       }
     }
 
