@@ -7,14 +7,17 @@ const documentosRoutes = require("./routes/documentosRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const faqRoutes = require("./routes/faqRoutes");
 
-// 👉 Nueva ruta que maneja las preguntas al documento
+// 👉 Ruta que maneja las preguntas al documento
 const preguntasRoutes = require("./routes/preguntas");
+
+// 👉 NUEVA RUTA: login admin
+const authRoutes = require("./routes/authRoutes");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // 🔥 ESTA LÍNEA FALTABA
+app.use(express.urlencoded({ extended: true }));
 
 // =====================================
 // 📌 Registrar rutas
@@ -23,14 +26,17 @@ app.use(express.urlencoded({ extended: true })); // 🔥 ESTA LÍNEA FALTABA
 // Subida + fragmentación de PDFs
 app.use("/documentos", documentosRoutes);
 
-// Preguntar a un documento (nueva ruta)
+// Preguntar a un documento
 app.use("/documentos", preguntasRoutes);
 
-// Chat general de tu bot
+// Chat general del bot
 app.use("/chat", chatRoutes);
 
 // Preguntas frecuentes
 app.use("/faq", faqRoutes);
+
+// 🔐 Login admin
+app.use("/auth", authRoutes);
 
 // =====================================
 // 📌 Ruta de prueba Railway
@@ -38,9 +44,14 @@ app.use("/faq", faqRoutes);
 app.get("/", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW()");
-    res.send("Backend Odonto-Bot funcionando ✔ | DB OK: " + result.rows[0].now);
+    res.send(
+      "Backend Odonto-Bot funcionando ✔ | DB OK: " +
+        result.rows[0].now
+    );
   } catch (error) {
-    res.send("Backend OK pero error con DB ❌: " + error.message);
+    res.send(
+      "Backend OK pero error con DB ❌: " + error.message
+    );
   }
 });
 
