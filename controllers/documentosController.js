@@ -21,10 +21,14 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
+    // 👉 admin que sube el documento (desde JWT)
+    const adminUsuario = req.admin.usuario;
+
     const archivo = req.file;
     const rutaPDF = archivo.path;
 
     console.log("📄 PDF recibido:", rutaPDF);
+    console.log("👤 Subido por:", adminUsuario);
 
     // 1️⃣ EXTRAER TEXTO LIMPIO
     let textoExtraído = await extraerTextoDesdePDF(rutaPDF);
@@ -36,7 +40,7 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 🔥 1.1 LIMPIEZA PROFESIONAL DEL TEXTO
+    // 🔥 LIMPIEZA PROFESIONAL DEL TEXTO
     textoExtraído = textoExtraído
       .replace(/\r/g, " ")
       .replace(/\n{2,}/g, "\n")
@@ -49,7 +53,7 @@ exports.subirDocumento = async (req, res) => {
     // 2️⃣ LEER PDF ORIGINAL
     const bufferOriginal = fs.readFileSync(rutaPDF);
 
-    // 3️⃣ GUARDAR DOCUMENTO
+    // 3️⃣ GUARDAR DOCUMENTO (CON subido_por)
     const resultadoDoc = await pool.query(
       `INSERT INTO documentos (
           nombre_original,
@@ -63,9 +67,10 @@ exports.subirDocumento = async (req, res) => {
           resumen,
           metadata,
           titulo,
-          ruta_archivo
+          ruta_archivo,
+          subido_por
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING id`,
       [
         archivo.originalname,
@@ -80,17 +85,17 @@ exports.subirDocumento = async (req, res) => {
         {},
         archivo.originalname,
         archivo.filename,
+        adminUsuario
       ]
     );
 
     const documentoId = resultadoDoc.rows[0].id;
 
-    // 4️⃣ FRAGMENTAR (nueva longitud óptima)
-    const fragmentos = fragmentarTexto(textoExtraído, 500); // CAMBIO IMPORTANTE
-
+    // 4️⃣ FRAGMENTAR TEXTO
+    const fragmentos = fragmentarTexto(textoExtraído, 500);
     console.log(`🧩 Total de fragmentos generados: ${fragmentos.length}`);
 
-    // 5️⃣ EMBEDDINGS + GUARDAR EN TABLA documentos_fragmentos
+    // 5️⃣ EMBEDDINGS + GUARDAR FRAGMENTOS
     for (let i = 0; i < fragmentos.length; i++) {
       const textoFragmento = fragmentos[i];
 
@@ -114,7 +119,7 @@ exports.subirDocumento = async (req, res) => {
       );
     }
 
-    // 6️⃣ ELIMINAR ARCHIVO FÍSICO TEMPORAL
+    // 6️⃣ ELIMINAR ARCHIVO TEMPORAL
     fs.unlinkSync(rutaPDF);
 
     res.json({
@@ -122,6 +127,7 @@ exports.subirDocumento = async (req, res) => {
       mensaje: "Documento subido, limpiado, fragmentado y embebido correctamente ✔",
       documentoId,
       total_fragmentos: fragmentos.length,
+      subido_por: adminUsuario
     });
 
   } catch (error) {
