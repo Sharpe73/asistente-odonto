@@ -56,19 +56,19 @@ exports.subirDocumento = async (req, res) => {
     // 3️⃣ GUARDAR DOCUMENTO (CON subido_por)
     const resultadoDoc = await pool.query(
       `INSERT INTO documentos (
-          nombre_original,
-          extension,
-          tipo,
-          tamano,
-          archivo_original,
-          contenido_texto,
-          paginas,
-          procesado,
-          resumen,
-          metadata,
-          titulo,
-          ruta_archivo,
-          subido_por
+        nombre_original,
+        extension,
+        tipo,
+        tamano,
+        archivo_original,
+        contenido_texto,
+        paginas,
+        procesado,
+        resumen,
+        metadata,
+        titulo,
+        ruta_archivo,
+        subido_por
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING id`,
@@ -108,7 +108,7 @@ exports.subirDocumento = async (req, res) => {
 
       await pool.query(
         `INSERT INTO documentos_fragmentos 
-          (documento_id, fragmento_index, texto, embedding)
+         (documento_id, fragmento_index, texto, embedding)
          VALUES ($1, $2, $3, $4)`,
         [
           documentoId,
@@ -137,6 +137,40 @@ exports.subirDocumento = async (req, res) => {
       ok: false,
       mensaje: "Error interno del servidor",
       error: error.message,
+    });
+  }
+};
+
+// =========================================================
+// 📄 LISTAR DOCUMENTOS (ADMIN)
+// =========================================================
+exports.listarDocumentos = async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        id,
+        nombre_original,
+        tipo,
+        tamano,
+        creado_en,
+        subido_por
+      FROM documentos
+      ORDER BY creado_en DESC
+    `);
+
+    res.json({
+      ok: true,
+      total: result.rows.length,
+      documentos: result.rows
+    });
+
+  } catch (error) {
+    console.error("❌ Error al listar documentos:", error);
+
+    res.status(500).json({
+      ok: false,
+      mensaje: "Error al listar documentos",
+      error: error.message
     });
   }
 };

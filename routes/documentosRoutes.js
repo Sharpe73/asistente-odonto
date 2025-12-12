@@ -42,13 +42,22 @@ const upload = multer({
 });
 
 // ===============================================
-// 🚀 Ruta final para subir y procesar PDF (PROTEGIDA)
+// 🚀 SUBIR Y PROCESAR PDF (PROTEGIDA)
 // ===============================================
 router.post(
   "/subir",
   authMiddleware,              // 🔐 JWT obligatorio
   upload.single("archivo"),
   documentosController.subirDocumento
+);
+
+// ===============================================
+// 📄 LISTAR DOCUMENTOS (ADMIN - PROTEGIDA)
+// ===============================================
+router.get(
+  "/listar",
+  authMiddleware,              // 🔐 solo admins logueados
+  documentosController.listarDocumentos
 );
 
 module.exports = router;
