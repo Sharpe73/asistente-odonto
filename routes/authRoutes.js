@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken"); // Agregamos jwt
 const pool = require("../database");
 
 const router = express.Router();
@@ -41,11 +42,17 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // ✔️ Login OK (SIN JWT, por ahora)
+    // ✔️ Login OK - Crear JWT
+    const token = jwt.sign(
+      { id: admin.id, usuario: admin.usuario },
+      process.env.JWT_SECRET, // Asegúrate de tener una clave secreta en el .env
+      { expiresIn: "1h" } // El token expira en 1 hora
+    );
+
     return res.json({
       ok: true,
       mensaje: "Login correcto",
-      usuario: admin.usuario
+      token
     });
 
   } catch (error) {
