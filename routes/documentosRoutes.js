@@ -5,6 +5,9 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
+// 🔐 Middleware JWT
+const authMiddleware = require("../middleware/authMiddleware");
+
 // ===============================================
 // 🛠 Crear carpeta uploads si no existe
 // ===============================================
@@ -20,7 +23,7 @@ if (!fs.existsSync(uploadsPath)) {
 // ===============================================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsPath); // carpeta asegurada
+    cb(null, uploadsPath);
   },
   filename: (req, file, cb) => {
     const nombreFinal = Date.now() + path.extname(file.originalname);
@@ -39,10 +42,11 @@ const upload = multer({
 });
 
 // ===============================================
-// 🚀 Ruta final para subir y procesar PDF
+// 🚀 Ruta final para subir y procesar PDF (PROTEGIDA)
 // ===============================================
 router.post(
   "/subir",
+  authMiddleware,              // 🔐 JWT obligatorio
   upload.single("archivo"),
   documentosController.subirDocumento
 );
