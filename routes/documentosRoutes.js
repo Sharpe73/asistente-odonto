@@ -28,7 +28,7 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const nombreFinal = Date.now() + path.extname(file.originalname);
     cb(null, nombreFinal);
-  }
+  },
 });
 
 const upload = multer({
@@ -38,7 +38,7 @@ const upload = multer({
       return cb(new Error("Solo se permiten archivos PDF"));
     }
     cb(null, true);
-  }
+  },
 });
 
 // ===============================================
@@ -46,7 +46,7 @@ const upload = multer({
 // ===============================================
 router.post(
   "/subir",
-  authMiddleware,              // 🔐 JWT obligatorio
+  authMiddleware, // 🔐 JWT obligatorio
   upload.single("archivo"),
   documentosController.subirDocumento
 );
@@ -56,8 +56,17 @@ router.post(
 // ===============================================
 router.get(
   "/listar",
-  authMiddleware,              // 🔐 solo admins logueados
+  authMiddleware, // 🔐 JWT obligatorio
   documentosController.listarDocumentos
+);
+
+// ===============================================
+// 🗑️ ELIMINAR DOCUMENTO POR ID (ADMIN - PROTEGIDA)
+// ===============================================
+router.delete(
+  "/:id",
+  authMiddleware, // 🔐 JWT obligatorio
+  documentosController.eliminarDocumento
 );
 
 module.exports = router;

@@ -21,16 +21,11 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 👉 admin que sube el documento (desde JWT)
     const adminUsuario = req.admin.usuario;
-
     const archivo = req.file;
     const rutaPDF = archivo.path;
 
-    console.log("📄 PDF recibido:", rutaPDF);
-    console.log("👤 Subido por:", adminUsuario);
-
-    // 1️⃣ EXTRAER TEXTO LIMPIO
+    // 1️⃣ EXTRAER TEXTO
     let textoExtraído = await extraerTextoDesdePDF(rutaPDF);
 
     if (!textoExtraído || textoExtraído.trim() === "") {
@@ -40,7 +35,6 @@ exports.subirDocumento = async (req, res) => {
       });
     }
 
-    // 🔥 LIMPIEZA PROFESIONAL DEL TEXTO
     textoExtraído = textoExtraído
       .replace(/\r/g, " ")
       .replace(/\n{2,}/g, "\n")
@@ -48,12 +42,10 @@ exports.subirDocumento = async (req, res) => {
       .trim()
       .normalize("NFC");
 
-    console.log("🔍 Largo del texto extraído:", textoExtraído.length, "caracteres");
-
     // 2️⃣ LEER PDF ORIGINAL
     const bufferOriginal = fs.readFileSync(rutaPDF);
 
-    // 3️⃣ GUARDAR DOCUMENTO (CON subido_por)
+    // 3️⃣ GUARDAR DOCUMENTO
     const resultadoDoc = await pool.query(
       `INSERT INTO documentos (
         nombre_original,
@@ -85,7 +77,7 @@ exports.subirDocumento = async (req, res) => {
         {},
         archivo.originalname,
         archivo.filename,
-        adminUsuario
+        adminUsuario,
       ]
     );
 
@@ -93,50 +85,39 @@ exports.subirDocumento = async (req, res) => {
 
     // 4️⃣ FRAGMENTAR TEXTO
     const fragmentos = fragmentarTexto(textoExtraído, 500);
-    console.log(`🧩 Total de fragmentos generados: ${fragmentos.length}`);
 
-    // 5️⃣ EMBEDDINGS + GUARDAR FRAGMENTOS
+    // 5️⃣ EMBEDDINGS
     for (let i = 0; i < fragmentos.length; i++) {
-      const textoFragmento = fragmentos[i];
-
       const embeddingResponse = await openai.embeddings.create({
         model: "text-embedding-3-small",
-        input: textoFragmento,
+        input: fragmentos[i],
       });
-
-      const embedding = embeddingResponse.data[0].embedding;
 
       await pool.query(
         `INSERT INTO documentos_fragmentos 
          (documento_id, fragmento_index, texto, embedding)
-         VALUES ($1, $2, $3, $4)`,
+         VALUES ($1,$2,$3,$4)`,
         [
           documentoId,
           i + 1,
-          textoFragmento,
-          JSON.stringify(embedding)
+          fragmentos[i],
+          JSON.stringify(embeddingResponse.data[0].embedding),
         ]
       );
     }
 
-    // 6️⃣ ELIMINAR ARCHIVO TEMPORAL
     fs.unlinkSync(rutaPDF);
 
     res.json({
       ok: true,
-      mensaje: "Documento subido, limpiado, fragmentado y embebido correctamente ✔",
+      mensaje: "Documento subido correctamente",
       documentoId,
-      total_fragmentos: fragmentos.length,
-      subido_por: adminUsuario
     });
-
   } catch (error) {
     console.error("❌ Error al subir documento:", error);
-
     res.status(500).json({
       ok: false,
       mensaje: "Error interno del servidor",
-      error: error.message,
     });
   }
 };
@@ -160,17 +141,58 @@ exports.listarDocumentos = async (req, res) => {
 
     res.json({
       ok: true,
-      total: result.rows.length,
-      documentos: result.rows
+      documentos: result.rows,
     });
-
   } catch (error) {
     console.error("❌ Error al listar documentos:", error);
-
     res.status(500).json({
       ok: false,
       mensaje: "Error al listar documentos",
-      error: error.message
+    });
+  }
+};
+
+// =========================================================
+// 🗑️ ELIMINAR DOCUMENTO (ADMIN)
+// =========================================================
+exports.eliminarDocumento = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // 1️⃣ Verificar que exista
+    const existe = await pool.query(
+      "SELECT id FROM documentos WHERE id = $1",
+      [id]
+    );
+
+    if (existe.rowCount === 0) {
+      return res.status(404).json({
+        ok: false,
+        mensaje: "Documento no encontrado",
+      });
+    }
+
+    // 2️⃣ Eliminar fragmentos
+    await pool.query(
+      "DELETE FROM documentos_fragmentos WHERE documento_id = $1",
+      [id]
+    );
+
+    // 3️⃣ Eliminar documento
+    await pool.query(
+      "DELETE FROM documentos WHERE id = $1",
+      [id]
+    );
+
+    res.json({
+      ok: true,
+      mensaje: "Documento eliminado correctamente",
+    });
+  } catch (error) {
+    console.error("❌ Error al eliminar documento:", error);
+    res.status(500).json({
+      ok: false,
+      mensaje: "Error al eliminar el documento",
     });
   }
 };
