@@ -42,7 +42,7 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // ✔️ Login OK - Crear JWT
+    
     const token = jwt.sign(
       { id: admin.id, usuario: admin.usuario },
       process.env.JWT_SECRET, // Asegúrate de tener una clave secreta en el .env
