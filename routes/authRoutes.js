@@ -1,6 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken"); // Agregamos jwt
+const jwt = require("jsonwebtoken");
 const pool = require("../database");
 
 const router = express.Router();
@@ -45,8 +45,8 @@ router.post("/login", async (req, res) => {
     
     const token = jwt.sign(
       { id: admin.id, usuario: admin.usuario },
-      process.env.JWT_SECRET, // Asegúrate de tener una clave secreta en el .env
-      { expiresIn: "1h" } // El token expira en 1 hora
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
     );
 
     return res.json({

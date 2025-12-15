@@ -120,7 +120,7 @@ exports.responderPregunta = async (req, res) => {
       };
     });
 
-    // 4️⃣ RANKING — AHORA NO FILTRAMOS SCORE > 0
+    
     const top = fragmentosProcesados
       .sort((a, b) => b.score - a.score)
       .slice(0, 12); // más robusto
