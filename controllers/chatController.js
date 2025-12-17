@@ -144,13 +144,14 @@ exports.preguntar = async (req, res) => {
     // ✅ PASO 2: REGISTRAR PREGUNTA (CONTROL DE USO)
     // =====================================================
     const logResult = await pool.query(
-      `INSERT INTO chat_logs (pregunta, modelo, usuario)
-       VALUES ($1, $2, $3)
+      `INSERT INTO chat_logs (pregunta, modelo, usuario, session_id)
+       VALUES ($1, $2, $3, $4)
        RETURNING id`,
       [
         pregunta,
         "gpt-4o",
-        "admin" // por ahora fijo
+        "admin",
+        session_id
       ]
     );
 
