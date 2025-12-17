@@ -140,6 +140,23 @@ exports.preguntar = async (req, res) => {
     if (!pregunta?.trim())
       return res.status(400).json({ ok: false, mensaje: "La pregunta no puede estar vacía" });
 
+    // =====================================================
+    // ✅ PASO 2: REGISTRAR PREGUNTA (CONTROL DE USO)
+    // =====================================================
+    const logResult = await pool.query(
+      `INSERT INTO chat_logs (pregunta, modelo, usuario)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [
+        pregunta,
+        "gpt-4o",
+        "admin" // por ahora fijo
+      ]
+    );
+
+    const chatLogId = logResult.rows[0].id;
+    // (chatLogId se usará en el Paso 3)
+
     // Guardar pregunta en historial
     await pool.query(
       `INSERT INTO chat_historial (session_id, role, mensaje)
