@@ -123,11 +123,24 @@ exports.subirDocumento = async (req, res) => {
 };
 
 // =========================================================
-// 📄 LISTAR DOCUMENTOS (ADMIN)
+// 📄 LISTAR DOCUMENTOS (ADMIN) — CON PAGINADO
 // =========================================================
 exports.listarDocumentos = async (req, res) => {
   try {
-    const result = await pool.query(`
+    // 🔹 Parámetros de paginado
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const offset = (page - 1) * limit;
+
+    // 🔹 Total de documentos
+    const totalResult = await pool.query(
+      "SELECT COUNT(*) FROM documentos"
+    );
+    const total = parseInt(totalResult.rows[0].count, 10);
+
+    // 🔹 Obtener documentos paginados
+    const result = await pool.query(
+      `
       SELECT 
         id,
         nombre_original,
@@ -137,10 +150,17 @@ exports.listarDocumentos = async (req, res) => {
         subido_por
       FROM documentos
       ORDER BY creado_en DESC
-    `);
+      LIMIT $1 OFFSET $2
+      `,
+      [limit, offset]
+    );
 
     res.json({
       ok: true,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
       documentos: result.rows,
     });
   } catch (error) {
